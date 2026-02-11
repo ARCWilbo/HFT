@@ -25,3 +25,5 @@ IBKR US Equity and Options level 2 market data for common stocks (i.e. AAPL, TSL
 Data Collection Method:
 
 We will use IBKR Market Data API to collect L2 tick market data
+
+<img width="1512" height="982" alt="Screenshot 2026-02-11 at 6 32 40 PM" src="https://github.com/user-attachments/assets/c8cd8f4b-3901-4a6e-8ad3-2268294b3de7" />
