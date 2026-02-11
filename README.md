@@ -12,7 +12,8 @@ Project Timeline:
 3/1: 
 3/16: 
 4/1: Finish Research Ideas (Backtesting)
-4/16: Finish Live Trading Code from the Signals
+4/12: Finish Coding Framework for the Live Paper Trading with the Research Signals
+4/13 - 4/24: Collect 2 Weeks of Live Paper Trading Results
 5/1: Final Report
 
 Project Goals: 
