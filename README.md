@@ -9,9 +9,7 @@ Project Timeline:
 2/11: Submit Project Proposal
 2/15: Finish script to collect and pull tick data
 2/16 - 2/20: Collect 1 week of tick data
-3/1: 
-3/16: 
-4/1: Finish Research Ideas (Backtesting)
+4/1: Finish Signal Research with Backtesting
 4/12: Finish Coding Framework for the Live Paper Trading with the Research Signals
 4/13 - 4/24: Collect 2 Weeks of Live Paper Trading Results
 5/1: Final Report
