@@ -26,4 +26,4 @@ Data Collection Method:
 
 We will use IBKR Market Data API to collect L2 tick market data
 
-<img width="1512" height="982" alt="Screenshot 2026-02-11 at 6 32 40 PM" src="https://github.com/user-attachments/assets/c8cd8f4b-3901-4a6e-8ad3-2268294b3de7" />
+<img width="601" height="515" alt="Screenshot 2026-02-11 at 6 32 40 PM" src="https://github.com/user-attachments/assets/7e505faa-42b3-4cd9-9673-1772a1bf0616" />
