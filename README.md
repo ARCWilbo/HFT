@@ -16,11 +16,11 @@ Project Timeline:
 
 Project Goals: 
 
-Successfully find and build profitable HFT strategies with a low drawdown and high sharpe ratio for US Equity Options
+Successfully find and build multiple profitable HFT strategies with a low drawdown and high sharpe ratio for US Equity Options
 
 Data Source: 
 
-IBKR US Equity and Options level 2 market data for common stocks (i.e. AAPL, TSLA, MSFT, ... etc)
+IBKR US Equity and Options level 2 tick market data for common stocks (i.e. AAPL, TSLA, MSFT, ... etc). The data will inlcude 10 price levels of bids and asks with volume as well as executed trades.
 
 Data Collection Method:
 
