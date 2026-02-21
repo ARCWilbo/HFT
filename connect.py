@@ -21,7 +21,6 @@ warnings.filterwarnings("ignore", message="Choices for a categorical distributio
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*weights_only=False.*")
 
 # ================= IBKR Connection =================
-#hi
 
 TICK_TYPE_NAMES = {
     0: "Bid Size",
@@ -52,12 +51,18 @@ class TestApp(EClient, EWrapper):
         # Contract Event
         self.contract_lock = Lock()
         self.contract_event = Event()
-        self.contract_dict = {} # contains another dictionary with keys: "exp" and "strike"
+        self.contract_dict = {} 
 
         # Options
         self.options_lock = Lock()
+        self.option_chain_event = Event()
         self.ticker_to_conId = {}
-        self.conId_option_chain = {}
+        self.conId_option_chain = {} # contains another dictionary with keys: "exp" and "strike"
+
+        # Historical data
+        self.historical_data_event = Event()
+        self.conId_to_price = {}
+        self.intermediate_prices = []
 
 
     def nextValidId(self, orderId: int):
@@ -327,19 +332,37 @@ class TestApp(EClient, EWrapper):
             self.order_id += 1
         
         contract = self.Req_Contract_details(ticker)
-        
+
+        self.option_chain_event.clear()
         self.reqSecDefOptParams(order_id, ticker, "", "STK", contract.contract.conId)
-    
+        self.option_chain_event.wait(10)
+
+        conId = self.ticker_to_conId["AAPL"]
+
+        if conId in self.conId_option_chain:
+
+            sorted_exp = sorted(self.conId_option_chain[conId]["exp"])
+            sorted_strikes = sorted(self.conId_option_chain[conId]["strike"])
+
+            self.conId_option_chain[conId]["exp"] = sorted_exp
+            self.conId_option_chain[conId]["strike"] = sorted_strikes
+
     def securityDefinitionOptionParameter(self, reqId: int, exchange: str, underlyingConId: int, tradingClass: str, multiplier: str, expirations, strikes):
         #print("SecurityDefinitionOptionParameter.", "ReqId:", reqId, "Exchange:", exchange, "Underlying conId:", underlyingConId, "TradingClass:", tradingClass, "Multiplier:", multiplier, "Expirations:", expirations, "Strikes:", strikes)
+        
+        # print(underlyingConId)
+        if (underlyingConId not in self.conId_option_chain):
+            self.conId_option_chain[underlyingConId] = {
+            "exp": set(),
+            "strike": set()
+            }
 
-        with self.contract_lock: 
-            if (underlyingConId not in self.contract_dict):
-                self.contract_dict[underlyingConId] = {"exp": expirations, "strike": strikes}
-            else: 
-                self.contract_dict[underlyingConId]["exp"].add(expirations)
-                self.contract_dict[underlyingConId]["strike"].add(strikes)
+        self.conId_option_chain[underlyingConId]["exp"].update(expirations)
+        self.conId_option_chain[underlyingConId]["strike"].update(strikes)
 
+
+    def securityDefinitionOptionParameterEnd(self, reqId: int):
+        self.option_chain_event.set()
 
     ##! Option Chain
 
@@ -356,9 +379,12 @@ class TestApp(EClient, EWrapper):
         self.reqContractDetails(order_id, stock_contract)
         self.contract_event.wait(timeout=10)
 
-        with self.contract_lock:
-            contract = self.contract_dict[order_id]
-            self.ticker_to_conId[ticker] = contract.contract.conId
+        if (ticker not in self.ticker_to_conId):
+            with self.contract_lock:
+                contract = self.contract_dict[order_id]
+                self.ticker_to_conId[ticker] = contract.contract.conId
+        
+        # print("Self", self.ticker_to_conId[ticker])
         
         return contract
     
@@ -370,7 +396,7 @@ class TestApp(EClient, EWrapper):
         # print(reqId, contractDetails)
     
     def contractDetailsEnd(self, reqId: int):
-        print("ContractDetailsEnd. ReqId:", reqId)
+        # print("ContractDetailsEnd. ReqId:", reqId)
         self.contract_event.set() 
 
     ##! Req Contract Details
@@ -382,15 +408,35 @@ class TestApp(EClient, EWrapper):
             order_id = self.order_id
             self.order_id += 1
         
-        contract = self.Req_Contract_details(ticker)
-        
+        contract = self.create_stock_contract(ticker)
+        contract.conId = self.ticker_to_conId[ticker]
+
+        self.historical_data_event.clear()
         self.reqHistoricalData(order_id, contract, "", "1 W", "1 day", "MIDPOINT", 1, 1, False, [])
+        self.historical_data_event.wait(10)
+
+        # Sort Data Histrical Bars and get most recent Price Close
+        df = pd.DataFrame(self.intermediate_prices)
+        df["date"] = pd.to_datetime(df["date"])
+        df.sort_values("date", ascending=False, inplace=True)
+        self.conId_to_price[self.ticker_to_conId[ticker]] = df.iloc[0]["close"]
+        self.intermediate_prices = []
 
     def historicalData(self, reqId:int, bar: BarData):
-        print("HistoricalData. ReqId:", reqId, "BarData.", bar)
+        # print("HistoricalData. ReqId:", reqId, "BarData.", bar)
+
+        self.intermediate_prices.append({
+            "date": bar.date,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume
+        })
     
     def historicalDataEnd(self, reqId: int, start: str, end: str):
-        print("HistoricalDataEnd. ReqId:", reqId, "from", start, "to", end)
+        # print("HistoricalDataEnd. ReqId:", reqId, "from", start, "to", end)
+        self.historical_data_event.set()
 
     ##! Current Asset Price 
 
@@ -430,8 +476,14 @@ if __name__ == "__main__":
     app = TestApp()
 
     ib_thread = setup_app_and_get_order_id(app, start_trade = True)
-   
-    time.sleep(1)
+
+    tickers = ["AAPL", "MSFT", "TSLA", "JPM", "BAC", "GS"]
+    
+    for ticker in tickers:
+        app.request_option_chain(ticker)
+        app.req_historical_price(ticker)
+        print(f"{ticker}: {app.conId_to_price[app.ticker_to_conId[ticker]]}")
+
     app.disconnect()
     ib_thread.join()
   
