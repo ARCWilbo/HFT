@@ -43,41 +43,20 @@ class TestApp(EClient, EWrapper):
 
     def __init__(self):
         EClient.__init__(self, self)
+
+        # Order ID
         self.order_id = None 
-        self.positions = []
-        self.positions_ready = Event()
-        self.last_trade = {
-            "price": None,
-            "size": None,
-            "timestamp": None
-        }
-        self.historical_data = []
-        self.historical_data_ready = Event()
-        self.historical_data_lock = Lock()
-        self.market_data_lock = Lock()
         self.order_id_lock = Lock()
-        
-        self.contract_event = Event() #contract event
-        self.contract_dict = {} 
+
+        # Contract Event
         self.contract_lock = Lock()
-        
-        self.market_data_events = {}
-        self.market_data_results = {}
-        self.historical_data_events = {}
-        self.historical_data_results = {}
-        self.late_historical_data = {}
-        
+        self.contract_event = Event()
+        self.contract_dict = {} # contains another dictionary with keys: "exp" and "strike"
 
-        self.reqId_symbol = {} 
-        self.symbol_tick_buffer = {}  
-        self.symbol_tick_lock = Lock()
-
-        self.bracket_fills = [] 
-        self._fill_tracker = {}  
-        self.tracker_lock = Lock()
-
-        self.open_orders = {}  
-        self.open_orders_event = Event()
+        # Options
+        self.options_lock = Lock()
+        self.ticker_to_conId = {}
+        self.conId_option_chain = {}
 
 
     def nextValidId(self, orderId: int):
@@ -271,55 +250,6 @@ class TestApp(EClient, EWrapper):
         self.placeOrder(stop_loss_order.orderId, contract, stop_loss_order)
         print(f"Placed bracket {position.upper()} order for {symbol} with entry of {quantity} shares @ ${entry_price}, take profit at {take_profit_price}, and stop loss at {stop_loss_price} with order_IDs {order_id} - {order_id +2}")
 
-    def execDetails(self, reqId, contract, execution):
-        """
-        Records All executed orders for individual stock thread profit calculations
-        """
-
-        symbol = contract.symbol
-        side = execution.side.upper()
-        price = execution.price
-        shares = execution.shares
-        order_id = execution.orderId
-        if order_id not in self._fill_tracker: 
-            return
-
-        if self._fill_tracker[order_id] == "Long": 
-            a = {"symbol": symbol,
-                "order_id": order_id,
-                "shares": shares,
-                "entry_price": price,
-                "exit_price": None,
-                "direction": "Long",
-            }
-        elif self._fill_tracker[order_id] == "Short": 
-            a = {"symbol": symbol,
-                "order_id": order_id,
-                "shares": shares,
-                "entry_price": price,
-                "exit_price": None,
-                "direction": "Short"
-            }
-        elif self._fill_tracker[order_id] == "Exit": 
-            a = {"symbol": symbol,
-                "order_id": order_id,
-                "shares": shares,
-                "entry_price": None,
-                "exit_price": price,
-                "direction": None
-            }
-        with self.tracker_lock:
-            self.bracket_fills.append(a)
-    
-    def retrive_and_empty_executed_orders(self): 
-        """
-        Returns the list of executed orders and resets it to a null set
-        """
-        
-        with self.tracker_lock:
-            a = self.bracket_fills  
-            self.bracket_fills = []
-        return a
 
     def place_combo_order(self, symbol1, conId1, symbol2, conId2, quantity1=1, quantity2=1, action1="BUY", action2="SELL"):
         """
@@ -364,262 +294,55 @@ class TestApp(EClient, EWrapper):
 
         self.placeOrder(order_id, combo_contract, combo_order)
         print(f"Placed combo order with {symbol1} ({action1}, {quantity1}) and {symbol2} ({action2}, {quantity2})")
-
-    def request_stock_market_data(self, symbol):
-        """
-        Request live market data for a stock NOT historical data
-        """
-
-        with self.order_id_lock:
-            ticker_id=self.order_id
-            self.order_id +=1
-
-        contract = self.create_stock_contract(symbol)
-
-        with self.symbol_tick_lock:
-            self.reqId_symbol[ticker_id] = symbol
-            self.symbol_tick_buffer[symbol] = deque(maxlen=3000) 
-
-        self.reqMktData(ticker_id, contract, "", False, False, [])
-        print(f"📡 Started market data for {symbol} [reqId={ticker_id}]")
         
-    def tickPrice(self, reqId, tickType, price, attrib):
-        if tickType == 4: 
-            with self.symbol_tick_lock:
-                symbol = self.reqId_symbol.get(reqId)
-                if symbol:
-                    timestamp = datetime.now()
-                    self.symbol_tick_buffer[symbol].append((timestamp, price, None))  
+    ##################### ---------------- New Code ---------------- #####################
 
-    def tickSize(self, reqId, tickType, size):
-        if tickType == 5: 
-            with self.symbol_tick_lock:
-                symbol = self.reqId_symbol.get(reqId)
-                if symbol and self.symbol_tick_buffer[symbol]:
-                    last_timestamp, last_price, _ = self.symbol_tick_buffer[symbol][-1]
-                    self.symbol_tick_buffer[symbol][-1] = (last_timestamp, last_price, size)
-
-
-    def tickString(self, reqId, tickType, value):
-        if tickType == 45: 
-            with self.market_data_lock:
-                ts = datetime.fromtimestamp(int(value))
-                self.market_data_results.setdefault(reqId, {})["timestamp"] = ts
-            self._maybe_set_event(reqId)
-
-    def _maybe_set_event(self, reqId):
-        with self.market_data_lock:
-            result = self.market_data_results.get(reqId, {})
-            if all(k in result for k in ["price", "size", "timestamp"]):
-                if reqId in self.market_data_events:
-                    self.market_data_events[reqId].set()
-
-    def print_last_trade(self, reqId):
-        trade = self.last_trade
-        if None not in trade.values():
-            #print(f"[{reqId}] LAST TRADE: {trade['price']} x {trade['size']} @ {trade['timestamp']}")
-            # Reset to avoid duplicate prints
-            self.last_trade = {"price": None, "size": None, "timestamp": None}
-
-    def cancel_stock_market_data(self, ticker_id):
-        """
-        Cancel live market data stream for a stock
-        """
-
-        self.cancelMktData(ticker_id)
-        print(f"Canceled market data for tickerId {ticker_id}")
-
-    def request_historical_data(self, symbol: str, duration_str: str, bar_size: str, thread_id: int, end_datetime: str = ""):
-        """
-        Request Historical stock market data 
-        """
-
-        if self.order_id is None:
-            print("Error: Next valid order ID has not been received yet.")
-            return None
-
-        contract = self.create_stock_contract(symbol)
-
-        with self.order_id_lock:
-            req_id = self.order_id
-            self.order_id += 1
-
-        event = Event()
-        with self.historical_data_lock:
-            self.historical_data_events[req_id] = event
-            self.historical_data_results[req_id] = []
-
-        self.reqHistoricalData(
-            reqId=req_id,
-            contract=contract,
-            endDateTime=end_datetime,
-            durationStr=duration_str,
-            barSizeSetting=bar_size,
-            whatToShow="TRADES",
-            useRTH=0,
-            formatDate=1,
-            keepUpToDate=False,
-            chartOptions=[]
-        )
-
-        event.wait(timeout=20)
-
-        with self.historical_data_lock:
-            bars = self.historical_data_results.pop(req_id, [])
-            self.historical_data_events.pop(req_id, None)
-
-        if not bars:
-            print(f"[reqId={req_id}, T {thread_id}] ⏰ Timeout. Waiting thread gave up.")
-            return None, req_id
-
-        df = pd.DataFrame(bars)
-        df["date"] = pd.to_datetime(df["date"])
-        df.set_index("date", inplace=True)
-        return df, req_id
-
-    def historicalData(self, reqId: int, bar: BarData):
-        with self.historical_data_lock:
-            self.historical_data_results.setdefault(reqId, []).append({
-                "date": bar.date,
-                "open": bar.open,
-                "high": bar.high,
-                "low": bar.low,
-                "close": bar.close,
-                "volume": bar.volume
-            })
-
-    def historicalDataEnd(self, reqId: int, start: str, end: str):
-        with self.historical_data_lock:
-            if reqId in self.historical_data_events:
-                self.historical_data_events[reqId].set()
-            else:
-                bars = self.historical_data_results.pop(reqId, [])
-                if bars:
-                    df = pd.DataFrame(bars)
-                    df["date"] = pd.to_datetime(df["date"])
-                    df.set_index("date", inplace=True)
-                    self.late_historical_data[reqId] = df
-
-    def cancel_historical_data_request(self, req_id: int):
-        """
-        Cancel a historical data request given a request ID
-        """
-        
-        self.cancelHistoricalData(req_id)
-
-    def request_available_funds(self):
-        """
-        Returns value of avaibale funds for trade
-        """
-        
-        self.account_summary_ready = Event()
-        self.account_summary_data = {}
-
-        with self.order_id_lock:
-            req_id = self.order_id
-            self.order_id += 1
-
-        self.reqAccountSummary(req_id, "All", "AvailableFunds,NetLiquidation")
-
-        if not self.account_summary_ready.wait(timeout=60):
-            print("⚠️ Timed out waiting for account value.")
-            return 800000
-        self.cancelAccountSummary(req_id)
-
-        return self.account_summary_data.get("AvailableFunds", None)
-
-    def accountSummary(self, reqId, account, tag, value, currency):
-        if tag == "AvailableFunds":
-            self.account_summary_data["AvailableFunds"] = float(value)
-        elif tag == "NetLiquidation":
-            self.account_summary_data["NetLiquidation"] = float(value)
-
-    def accountSummaryEnd(self, reqId):
-        print("✅ Account summary received.")
-        self.account_summary_ready.set()
-    
-    def cancel_open_orders_for_symbol(self):
-        """
-        Gets a list of all open (unfilled) stock orders
-        """
-
-        self.open_orders = {}
-        self.open_orders_event.clear()
-        self.reqOpenOrders()
-        if not self.open_orders_event.wait(timeout=2):
-            print("⚠️ Timed out waiting for open orders.")
-        self.open_orders_event.set()
-    
-    def cancel_all_stock_orders(self): 
-        """
-        Cancels all open (unfilled) stock orders for all stocks
-        """
-
-        for order_id, contract in self.open_orders.items():
-            if contract.secType == "STK": 
-                self.cancelOrder(order_id)
-
-    def cancel_stock_orders(self, symbol: str):
-        """
-        Cancels all open (unfilled) stock orders for a specific stock
-        """
-
-        for order_id, contract in self.open_orders.items():
-            if contract.secType == "STK" and contract.symbol.upper() == symbol.upper():
-                self.cancelOrder(order_id)
-
-    def openOrder(self, orderId, contract, order, orderState):
-        if not hasattr(self, "open_orders"):
-            self.open_orders = {}
-
-        if orderState.status.lower() not in ["filled", "cancelled"]:
-            self.open_orders[orderId] = contract
-    
-    def openOrderEnd(self):
-        print("Finished receiving open orders.")
-        self.open_orders_event.set()
-
-
-##: Level 2 Market Data:
-
+    ## Level 2 Market Data
     def reqL2(self,ticker):
+       
         print("establishing request for L2:")
         stock_contract = self.create_stock_contract(ticker)
         self.reqMktDepth(2001, stock_contract, 5, False, [])
-        
+
     def updateMktDepth(self, reqId, position: int, operation: int, side: int, price: float, size):
-        reqId = int(reqId)
-        size = float(size)
-        print("UpdateMarketDepth. ReqId:", reqId, "Position:", position, "Operation:", operation, "Side:", side, "Price:", (price), "Size:", (size))
- 
+        reqId, size = int(reqId), float(size)
+        print("UpdateMarketDepth. ReqId:", reqId, "Position:", position, "Operation:", operation, "Side:", side, "Price:", floatMaxString(price), "Size:", decimalMaxString(size))
+            
     def updateMktDepthL2(self, reqId, position: int, marketMaker: str, operation: int, side: int, price: float, size, isSmartDepth: bool):
-        reqId= int(reqId)
-        size = float(size)
-        print("UpdateMarketDepthL2. ReqId:", reqId, "Position:", position, "MarketMaker:", marketMaker, "Operation:", operation, "Side:", side, "Price:", (price), "Size:", (size), "isSmartDepth:", isSmartDepth)    
-        
-    def cancelL2(self,reqId):
-        self.cancelMktDepth(2001, False)
-        print("cancelled L2")
+        reqId, size = int(reqId), float(size)
+        print("UpdateMarketDepthL2. ReqId:", reqId, "Position:", position, "MarketMaker:", marketMaker, "Operation:", operation, "Side:", side, "Price:", floatMaxString(price), "Size:", decimalMaxString(size), "isSmartDepth:", isSmartDepth)
 
-##: Options Market Data:
+    def cancel_L2(self, reqId): 
+        self.cancelMktDepth(reqId, False)
+        print("cancelled L2 MKT Data")
+    
+    ##! Level 2 Market Data
 
-    def request_option_chain(self, ticker):
+    ## Option Chain
+    def request_option_chain(self, ticker): 
 
         with self.order_id_lock:
             order_id = self.order_id
             self.order_id += 1
         
         contract = self.Req_Contract_details(ticker)
-
-        print(100000)
-
+        
         self.reqSecDefOptParams(order_id, ticker, "", "STK", contract.contract.conId)
     
     def securityDefinitionOptionParameter(self, reqId: int, exchange: str, underlyingConId: int, tradingClass: str, multiplier: str, expirations, strikes):
         #print("SecurityDefinitionOptionParameter.", "ReqId:", reqId, "Exchange:", exchange, "Underlying conId:", underlyingConId, "TradingClass:", tradingClass, "Multiplier:", multiplier, "Expirations:", expirations, "Strikes:", strikes)
-        print(expirations, strikes)
 
-## Req Contract Details
+        with self.contract_lock: 
+            if (underlyingConId not in self.contract_dict):
+                self.contract_dict[underlyingConId] = {"exp": expirations, "strike": strikes}
+            else: 
+                self.contract_dict[underlyingConId]["exp"].add(expirations)
+                self.contract_dict[underlyingConId]["strike"].add(strikes)
+
+
+    ##! Option Chain
+
+    ## Req Contract Details
     def Req_Contract_details(self, ticker): 
 
         with self.order_id_lock:
@@ -634,20 +357,49 @@ class TestApp(EClient, EWrapper):
 
         with self.contract_lock:
             contract = self.contract_dict[order_id]
+            self.ticker_to_conId[ticker] = contract.contract.conId
         
         return contract
     
     def contractDetails(self, reqId: int, contractDetails):
+        
         with self.contract_lock:
             self.contract_dict[reqId] = contractDetails
         
-        print(reqId, contractDetails)
+        # print(reqId, contractDetails)
     
     def contractDetailsEnd(self, reqId: int):
         print("ContractDetailsEnd. ReqId:", reqId)
         self.contract_event.set() 
-    
 
+    ##! Req Contract Details
+    
+    ## Current Asset Price 
+    def req_historical_price(self, ticker): 
+
+        with self.order_id_lock:
+            order_id = self.order_id
+            self.order_id += 1
+        
+        contract = self.Req_Contract_details(ticker)
+        
+        self.reqHistoricalData(order_id, contract, "", "1 W", "1 day", "MIDPOINT", 1, 1, False, [])
+
+    def historicalData(self, reqId:int, bar: BarData):
+        print("HistoricalData. ReqId:", reqId, "BarData.", bar)
+    
+    def historicalDataEnd(self, reqId: int, start: str, end: str):
+        print("HistoricalDataEnd. ReqId:", reqId, "from", start, "to", end)
+
+    ##! Current Asset Price 
+
+
+
+
+
+
+
+    
 
 
 # ================= Live Trading =================
@@ -667,21 +419,18 @@ def setup_app_and_get_order_id(app, start_trade = False):
 
     print(f"Main thread received order_id: {app.order_id}")
 
-    #pos = app.get_positions()
     return app_thread
 
 # ================= Main Thread =================
 
 if __name__ == "__main__":
-    # ================= Live Trading =================
 
     start_time = time.time()
     app = TestApp()
+
     ib_thread = setup_app_and_get_order_id(app, start_trade = True)
-    app.request_option_chain("AAPL")
-    time.sleep(10)
-    available_funds = app.request_available_funds()
-    print(available_funds)
+   
+    time.sleep(1)
     app.disconnect()
     ib_thread.join()
   
