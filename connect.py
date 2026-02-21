@@ -21,6 +21,7 @@ warnings.filterwarnings("ignore", message="Choices for a categorical distributio
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*weights_only=False.*")
 
 # ================= IBKR Connection =================
+#hi
 
 TICK_TYPE_NAMES = {
     0: "Bid Size",
