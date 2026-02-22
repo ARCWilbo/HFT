@@ -13,6 +13,7 @@ from collections import deque
 import warnings
 from queue import Queue
 import numpy as np
+import json
 
 # Mute Warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -63,6 +64,9 @@ class TestApp(EClient, EWrapper):
         self.historical_data_event = Event()
         self.conId_to_price = {}
         self.intermediate_prices = []
+
+        # Options Meta Data 
+        self.options_meta_data = {}
 
 
     def nextValidId(self, orderId: int):
@@ -337,7 +341,7 @@ class TestApp(EClient, EWrapper):
         self.reqSecDefOptParams(order_id, ticker, "", "STK", contract.contract.conId)
         self.option_chain_event.wait(10)
 
-        conId = self.ticker_to_conId["AAPL"]
+        conId = self.ticker_to_conId[ticker]
 
         if conId in self.conId_option_chain:
 
@@ -440,6 +444,62 @@ class TestApp(EClient, EWrapper):
 
     ##! Current Asset Price 
 
+    ## Saving Option Meta Data
+    def create_options_metadata(self, ticker): 
+
+        # print(self.conId_option_chain[self.ticker_to_conId[ticker]])
+
+        price = self.conId_to_price[self.ticker_to_conId[ticker]]
+
+        ticker_strike = []
+        last = 0
+        
+        ints = [x for x in self.conId_option_chain[self.ticker_to_conId[ticker]]['strike'] if (x%1==0)]
+
+        for p in ints:
+            
+            if (p > price): 
+                ticker_strike.append(last)
+                ticker_strike.append(p)
+                break
+
+            last = p
+
+        today = datetime.today()
+
+        days_until_friday = (4 - today.weekday()) % 7
+        
+        if days_until_friday == 0:
+            days_until_friday = 7 
+
+        next_friday = today + timedelta(days=days_until_friday)
+        # next_next_friday = next_friday + timedelta(weeks=1)
+
+        next_friday = next_friday.strftime("%Y%m%d")
+
+        exp1 = False
+        option_exps = []
+        for exp in self.conId_option_chain[self.ticker_to_conId[ticker]]['exp']:
+            if (exp1): 
+                option_exps.append(str(exp))
+                break
+
+            if int(exp) >= int(next_friday): 
+                exp1 = True
+                option_exps.append(str(exp))
+        
+        self.options_meta_data[ticker] = {"conId": self.ticker_to_conId[ticker], "price": price, "strike": ticker_strike, "exp": option_exps}
+        print(self.options_meta_data[ticker])
+
+    def save_options(self): 
+        with open("options_meta_data.json", "w") as f:
+            json.dump(self.options_meta_data, f, indent=4)
+    
+    def load_options(self): 
+        with open("options_meta_data.json", "r") as f:
+            self.options_meta_data = json.load(f)
+
+    ##! Saving Option Meta Data
 
 
 
@@ -482,7 +542,12 @@ if __name__ == "__main__":
     for ticker in tickers:
         app.request_option_chain(ticker)
         app.req_historical_price(ticker)
-        print(f"{ticker}: {app.conId_to_price[app.ticker_to_conId[ticker]]}")
+        # print(f"{ticker}: {app.conId_to_price[app.ticker_to_conId[ticker]]}")
+        app.create_options_metadata(ticker)
+    
+    # app.load_options()
+    # app.save_options()
+    # print(app.options_meta_data)
 
     app.disconnect()
     ib_thread.join()
