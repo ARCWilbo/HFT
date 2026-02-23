@@ -136,6 +136,29 @@ class TestApp(EClient, EWrapper):
         contract.exchange = "SMART"
         contract.currency = "USD"
         return contract
+    
+    def create_opt_contract(self, symbol: str, strike: float, exp: str, right: str) -> Contract:
+        """
+        Creates an IBKR Option Contract.
+
+        exp format: 'YYYYMMDD' (e.g. '20260320')
+        right: 'C' for Call, 'P' for Put
+        """
+
+        contract = Contract()
+        contract.symbol = symbol
+        contract.secType = "OPT"
+        # contract.exchange = "SMART" # "NASDAQ"
+        # contract.exchange = "NASDAQOM" # IB exchange for NASDAQ traded options
+        contract.exchange = "PSE"
+        contract.currency = "USD"
+
+        contract.lastTradeDateOrContractMonth = exp
+        contract.strike = strike
+        contract.right = right
+        contract.multiplier = "100"
+
+        return contract
 
     def place_limit_order(self, symbol, limit_price, quantity=1):
         """
@@ -308,19 +331,38 @@ class TestApp(EClient, EWrapper):
     ##################### ---------------- New Code ---------------- #####################
 
     ## Level 2 Market Data
-    def reqL2(self,ticker):
+    def reqL2(self,ticker, strike_pos: int, exp_pos: int, opt_right: str, opt = False):
        
         print("establishing request for L2:")
-        stock_contract = self.create_stock_contract(ticker)
-        self.reqMktDepth(2001, stock_contract, 5, False, [])
+
+        with self.order_id_lock:
+            order_id = self.order_id
+            self.order_id +=1
+        
+        with self.order_id_lock:
+            req_order_id = self.order_id
+            self.order_id +=1
+
+        if (opt): 
+            option_strike = self.options_meta_data[ticker]['strike'][strike_pos]
+            option_exp = self.options_meta_data[ticker]['exp'][exp_pos]
+            opt_contract = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right)
+
+            self.reqContractDetails(req_order_id, opt_contract)
+
+            self.reqMktDepth(order_id, opt_contract, 10, False, [])
+        else: 
+            stock_contract = self.create_stock_contract(ticker)
+            self.reqMktDepth(order_id, stock_contract, 10, False, [])
 
     def updateMktDepth(self, reqId, position: int, operation: int, side: int, price: float, size):
+        # Triggered by: SPY, QQQ, IWM 
         reqId, size = int(reqId), float(size)
-        print("UpdateMarketDepth. ReqId:", reqId, "Position:", position, "Operation:", operation, "Side:", side, "Price:", floatMaxString(price), "Size:", decimalMaxString(size))
+        print("UpdateMarketDepth. ReqId:", reqId, "Position:", position, "Operation:", operation, "Side:", side, "Price:", price, "Size:", size)
             
     def updateMktDepthL2(self, reqId, position: int, marketMaker: str, operation: int, side: int, price: float, size, isSmartDepth: bool):
         reqId, size = int(reqId), float(size)
-        print("UpdateMarketDepthL2. ReqId:", reqId, "Position:", position, "MarketMaker:", marketMaker, "Operation:", operation, "Side:", side, "Price:", floatMaxString(price), "Size:", decimalMaxString(size), "isSmartDepth:", isSmartDepth)
+        print("UpdateMarketDepthL2. ReqId:", reqId, "Position:", position, "MarketMaker:", marketMaker, "Operation:", operation, "Side:", side, "Price:", price, "Size:", size, "isSmartDepth:", isSmartDepth)
 
     def cancel_L2(self, reqId): 
         self.cancelMktDepth(reqId, False)
@@ -445,7 +487,7 @@ class TestApp(EClient, EWrapper):
     ##! Current Asset Price 
 
     ## Saving Option Meta Data
-    def create_options_metadata(self, ticker): 
+    def create_options_metadata(self, ticker: str) -> None: 
 
         # print(self.conId_option_chain[self.ticker_to_conId[ticker]])
 
@@ -465,28 +507,30 @@ class TestApp(EClient, EWrapper):
 
             last = p
 
-        today = datetime.today()
+        # today = datetime.today()
 
-        days_until_friday = (4 - today.weekday()) % 7
+        # days_until_friday = (4 - today.weekday()) % 7
         
-        if days_until_friday == 0:
-            days_until_friday = 7 
+        # if days_until_friday == 0:
+        #     days_until_friday = 7 
 
-        next_friday = today + timedelta(days=days_until_friday)
-        # next_next_friday = next_friday + timedelta(weeks=1)
+        # next_friday = today + timedelta(days=days_until_friday)
+        # # next_next_friday = next_friday + timedelta(weeks=1)
 
-        next_friday = next_friday.strftime("%Y%m%d")
+        # next_friday = next_friday.strftime("%Y%m%d")
 
-        exp1 = False
-        option_exps = []
-        for exp in self.conId_option_chain[self.ticker_to_conId[ticker]]['exp']:
-            if (exp1): 
-                option_exps.append(str(exp))
-                break
+        # exp1 = False
+        # option_exps = []
+        # for exp in self.conId_option_chain[self.ticker_to_conId[ticker]]['exp']:
+        #     if (exp1): 
+        #         option_exps.append(str(exp))
+        #         break
 
-            if int(exp) >= int(next_friday): 
-                exp1 = True
-                option_exps.append(str(exp))
+        #     if int(exp) >= int(next_friday): 
+        #         exp1 = True
+        #         option_exps.append(str(exp))
+
+        option_exps = self.conId_option_chain[self.ticker_to_conId[ticker]]['exp'][:2]
         
         self.options_meta_data[ticker] = {"conId": self.ticker_to_conId[ticker], "price": price, "strike": ticker_strike, "exp": option_exps}
         print(self.options_meta_data[ticker])
@@ -500,6 +544,24 @@ class TestApp(EClient, EWrapper):
             self.options_meta_data = json.load(f)
 
     ##! Saving Option Meta Data
+
+    ## Checking Accepted Market Data Exchanges 
+
+    def check_l2_exchanges(self): 
+
+        self.reqMktDepthExchanges()
+
+    def mktDepthExchanges(self, depthMktDataDescriptions):
+        print("MktDepthExchanges:")
+        for desc in depthMktDataDescriptions:
+            if (desc.secType == "OPT"): # filtering for Options only
+                print("DepthMktDataDescription.", desc)
+
+    ##! Checking Accepted Market Data Exchanges 
+
+    
+
+
 
 
 
@@ -537,13 +599,20 @@ if __name__ == "__main__":
 
     ib_thread = setup_app_and_get_order_id(app, start_trade = True)
 
-    tickers = ["AAPL", "MSFT", "TSLA", "JPM", "BAC", "GS"]
+    tickers = ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "TSLA", "AMD"] # , "MSFT", "TSLA", "JPM", "BAC", "GS"
+
+    # SPY QQQ IWM AAPL NVDA TSLA AMD, META MSFT
     
     for ticker in tickers:
         app.request_option_chain(ticker)
         app.req_historical_price(ticker)
         # print(f"{ticker}: {app.conId_to_price[app.ticker_to_conId[ticker]]}")
         app.create_options_metadata(ticker)
+    
+    # app.check_l2_exchanges()
+    
+    app.reqL2(tickers[0], strike_pos = 0 , exp_pos= 0, opt_right= "C", opt = True)
+    time.sleep(5)
     
     # app.load_options()
     # app.save_options()
