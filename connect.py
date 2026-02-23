@@ -137,7 +137,7 @@ class TestApp(EClient, EWrapper):
         contract.currency = "USD"
         return contract
     
-    def create_opt_contract(self, symbol: str, strike: float, exp: str, right: str) -> Contract:
+    def create_opt_contract(self, symbol: str, strike: float, exp: str, right: str, exchange: str) -> Contract:
         """
         Creates an IBKR Option Contract.
 
@@ -148,9 +148,7 @@ class TestApp(EClient, EWrapper):
         contract = Contract()
         contract.symbol = symbol
         contract.secType = "OPT"
-        # contract.exchange = "SMART" # "NASDAQ"
-        # contract.exchange = "NASDAQOM" # IB exchange for NASDAQ traded options
-        contract.exchange = "PSE"
+        contract.exchange = exchange # "PSE", "NASDAQOM", "SMART"
         contract.currency = "USD"
 
         contract.lastTradeDateOrContractMonth = exp
@@ -336,24 +334,26 @@ class TestApp(EClient, EWrapper):
         print("establishing request for L2:")
 
         with self.order_id_lock:
-            order_id = self.order_id
+            order_id_1 = self.order_id
             self.order_id +=1
         
         with self.order_id_lock:
-            req_order_id = self.order_id
+            order_id_2 = self.order_id
             self.order_id +=1
 
         if (opt): 
             option_strike = self.options_meta_data[ticker]['strike'][strike_pos]
             option_exp = self.options_meta_data[ticker]['exp'][exp_pos]
-            opt_contract = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right)
+            opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right, exchange = "PSE")
+            opt_contract_NASDAQOM = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right, exchange = "NASDAQOM")
 
-            self.reqContractDetails(req_order_id, opt_contract)
+            # self.reqContractDetails(req_order_id, opt_contract)
 
-            self.reqMktDepth(order_id, opt_contract, 10, False, [])
+            self.reqMktDepth(order_id_1, opt_contract_PSE, 10, False, [])
+            self.reqMktDepth(order_id_2, opt_contract_NASDAQOM, 10, False, [])
         else: 
             stock_contract = self.create_stock_contract(ticker)
-            self.reqMktDepth(order_id, stock_contract, 10, False, [])
+            self.reqMktDepth(order_id_1, stock_contract, 10, False, [])
 
     def updateMktDepth(self, reqId, position: int, operation: int, side: int, price: float, size):
         # Triggered by: SPY, QQQ, IWM 
@@ -559,6 +559,38 @@ class TestApp(EClient, EWrapper):
 
     ##! Checking Accepted Market Data Exchanges 
 
+    ## Top of Book Live Tick Data
+
+    def req_top_of_book_tick_data(self,ticker, strike_pos: int, exp_pos: int, opt_right: str, opt = False):
+
+        with self.order_id_lock:
+            order_id = self.order_id
+            self.order_id += 1
+        
+        if (opt): 
+            option_strike = self.options_meta_data[ticker]['strike'][strike_pos]
+            option_exp = self.options_meta_data[ticker]['exp'][exp_pos]
+            opt_contract = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right, exchange="SMART")
+
+            self.reqTickByTickData(order_id, opt_contract, "BidAsk", 0, True)
+        else: 
+            stock_contract = self.create_stock_contract(ticker)
+            self.reqTickByTickData(order_id, stock_contract, "BidAsk", 0, True)
+    
+    def tickByTickAllLast(self, reqId: int, tickType: int, time: int, price: float, size, tickAtrribLast, exchange: str,specialConditions: str):
+        print(" ReqId:", reqId, "Time:", time, "Price:", price, "Size:", size, "Exch:" , exchange, "Spec Cond:", specialConditions, "PastLimit:", tickAtrribLast.pastLimit, "Unreported:", tickAtrribLast.unreported)
+    
+    def tickByTickBidAsk(self, reqId: int, time: int, bidPrice: float, askPrice: float, bidSize, askSize, tickAttribBidAsk):
+        print("BidAsk. ReqId:", reqId, "Time:", time, "BidPrice:", bidPrice, "AskPrice:", askPrice, "BidSize:", bidSize, "AskSize:", askSize, "BidPastLow:", tickAttribBidAsk.bidPastLow, "AskPastHigh:", tickAttribBidAsk.askPastHigh)
+    
+    def tickByTickMidPoint(self, reqId: int, time: int, midPoint: float):
+        print("Midpoint. ReqId:", reqId, "Time:", time, "MidPoint:", midPoint)
+    
+    def cancel_tick_data(self): 
+        self.cancelTickByTickData(19001)
+
+    ##! Top of Book Live Tick Data
+
     
 
 
@@ -599,9 +631,9 @@ if __name__ == "__main__":
 
     ib_thread = setup_app_and_get_order_id(app, start_trade = True)
 
-    tickers = ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "TSLA", "AMD"] # , "MSFT", "TSLA", "JPM", "BAC", "GS"
+    tickers = ["IWM"] #"SPY", "QQQ", "IWM", "AAPL", "TSLA", "AMD"] # , "MSFT", "TSLA", "JPM", "BAC", "GS"
 
-    # SPY QQQ IWM AAPL NVDA TSLA AMD, META MSFT
+    # SPY QQQ IWM AAPL TSLA AMD, META MSFT
     
     for ticker in tickers:
         app.request_option_chain(ticker)
@@ -611,8 +643,10 @@ if __name__ == "__main__":
     
     # app.check_l2_exchanges()
     
-    app.reqL2(tickers[0], strike_pos = 0 , exp_pos= 0, opt_right= "C", opt = True)
-    time.sleep(5)
+    # app.reqL2(tickers[0], strike_pos = 0 , exp_pos= 0, opt_right= "C", opt = True)
+    app.req_top_of_book_tick_data(tickers[0], strike_pos = 0 , exp_pos= 0, opt_right= "C", opt = False)
+    # app.reqL2(tickers[0], strike_pos = 0 , exp_pos= 0, opt_right= "C", opt = True)
+    time.sleep(1)
     
     # app.load_options()
     # app.save_options()
