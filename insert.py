@@ -1,72 +1,97 @@
-import time
-from typing import Iterable, Dict, Any, Optional
 import psycopg
+import time
+from datetime import datetime
+import pandas as pd
+import time
 
+"""
+Before Running the File, make sure that you have Postgre SQL and that you have a db created called: 
 
-UPSERT_SQL = """
-INSERT INTO option_snapshots
-  (ticker, option_symbol, strike, exp, m1, m2, m3, m4, updated_at)
-VALUES
-  (%(ticker)s, %(option_symbol)s, %(strike)s, %(exp)s, %(m1)s, %(m2)s, %(m3)s, %(m4)s, NOW())
-ON CONFLICT (ticker, option_symbol, strike, exp)
-DO UPDATE SET
-  m1 = EXCLUDED.m1,
-  m2 = EXCLUDED.m2,
-  m3 = EXCLUDED.m3,
-  m4 = EXCLUDED.m4,
-  updated_at = NOW();
+hft_db
+
+Under your user!
+
+You can use the following commands in the Terminal: 
+
+dropdb hft_db  # to Delete a db
+createdb hft_db # to Create a db 
+
 """
 
+DB_CONFIG = "dbname=hft_db user=arcwilbo"
 
-def get_conn(dsn: str) -> psycopg.Connection:
-    """
-    dsn example:
-      "postgresql://user:password@localhost:5432/mydb"
-    """
-    return psycopg.connect(dsn)
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS option_orders (
+    id BIGSERIAL PRIMARY KEY,
+    ticker TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    option_exp DATE NULL,
+    strike DOUBLE PRECISION NULL,
+    option_right TEXT,
+    position INTEGER NOT NULL,
+    operation INTEGER NOT NULL,
+    side INTEGER NOT NULL,
+    price DOUBLE PRECISION NOT NULL,
+    size INTEGER NOT NULL,
+    event_timestamp BIGINT NOT NULL
+);
+"""
 
+INSERT_SQL = """
+INSERT INTO option_orders (
+    ticker,
+    exchange,
+    option_exp,
+    strike,
+    option_right,
+    position,
+    operation,
+    side,
+    price,
+    size, 
+    event_timestamp
+)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
 
-def upsert_rows(conn: psycopg.Connection, rows: Iterable[Dict[str, Any]]) -> None:
-    """
-    rows: iterable of dicts with keys:
-      ticker, option_symbol, strike, exp, m1, m2, m3, m4
-    """
-    rows = list(rows)
-    if not rows:
-        return
+QUERY = """
+SELECT *
+FROM option_orders
+ORDER BY event_timestamp DESC;
+"""
+da = [("Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, time.perf_counter_ns())] * 1
 
-    with conn.cursor() as cur:
-        cur.executemany(UPSERT_SQL, rows)
+def add(data):
+
+    print(1)
+    conn = psycopg.connect(DB_CONFIG)
+    cur = conn.cursor()
+
+    # 2️⃣ Ensure table exists
+    cur.execute(CREATE_TABLE_SQL)
     conn.commit()
 
+    try:
 
-def periodic_updater(
-    dsn: str,
-    fetch_rows_fn,
-    interval_seconds: int = 10,
-    jitter_seconds: float = 0.0,
-    run_forever: bool = True,
-    max_loops: Optional[int] = None,
-) -> None:
-    """
-    fetch_rows_fn: callable that returns an iterable of row dicts to upsert.
-                  This is where you pull from your market data / API.
+        cur.executemany(INSERT_SQL, data)
+        conn.commit()
 
-    interval_seconds: how often to update
-    jitter_seconds: optional random-ish delay (you can implement if desired)
-    """
-    loops = 0
-    with get_conn(dsn) as conn:
-        while True:
-            try:
-                rows = fetch_rows_fn()
-                upsert_rows(conn, rows)
-            except Exception as e:
-                # Keep it simple: log and continue
-                print(f"[updater] error: {e}")
+    except KeyboardInterrupt:
+        print("Shutting down cleanly...")
 
-            loops += 1
-            if not run_forever and max_loops is not None and loops >= max_loops:
-                break
+    finally:
+        cur.close()
+        conn.close()
 
-            time.sleep(interval_seconds)
+
+def pull():
+    conn = psycopg.connect(DB_CONFIG)
+    df = pd.read_sql(QUERY, conn)
+    print(df.head())
+    print(df.shape)
+    conn.close()
+
+
+if __name__ == "__main__":
+    add(da)
+    pull()

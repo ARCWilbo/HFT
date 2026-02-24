@@ -14,6 +14,7 @@ import warnings
 from queue import Queue
 import numpy as np
 import json
+from insert import add, pull
 
 # Mute Warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -23,19 +24,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*weights_onl
 
 # ================= IBKR Connection =================
 
-TICK_TYPE_NAMES = {
-    0: "Bid Size",
-    1: "Bid Price",
-    2: "Ask Price",
-    3: "Ask Size",
-    4: "Last Price",
-    5: "Last Size",
-    6: "High",
-    7: "Low",
-    8: "Volume",
-    32: "Exchange",
-    45: "Last Timestamp"
-}
+stop_event = Event()
 
 class TestApp(EClient, EWrapper):
     """ 
@@ -67,6 +56,12 @@ class TestApp(EClient, EWrapper):
 
         # Options Meta Data 
         self.options_meta_data = {}
+
+        # Tick Data Collection 
+        self.tick_data_collection_lock = Lock()
+        self.wake_db_worker = Event()
+        self.tick_data_collection = []
+        self.reqId_to_contract = {}
 
 
     def nextValidId(self, orderId: int):
@@ -329,7 +324,7 @@ class TestApp(EClient, EWrapper):
     ##################### ---------------- New Code ---------------- #####################
 
     ## Level 2 Market Data
-    def reqL2(self,ticker, strike_pos: int, exp_pos: int, opt_right: str, opt = False):
+    def req_opt_L2(self, ticker, strike_pos: int, exp_pos: int, opt_right: str):
        
         print("establishing request for L2:")
 
@@ -340,24 +335,48 @@ class TestApp(EClient, EWrapper):
         with self.order_id_lock:
             order_id_2 = self.order_id
             self.order_id +=1
+         
+        option_strike = self.options_meta_data[ticker]['strike'][strike_pos]
+        option_exp = self.options_meta_data[ticker]['exp'][exp_pos]
 
-        if (opt): 
-            option_strike = self.options_meta_data[ticker]['strike'][strike_pos]
-            option_exp = self.options_meta_data[ticker]['exp'][exp_pos]
-            opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right, exchange = "PSE")
-            opt_contract_NASDAQOM = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right, exchange = "NASDAQOM")
+        self.reqId_to_contract[order_id_1] = {"ticker": ticker, "exchange": "PSE", "exp": option_exp, "strike": option_strike, "right": opt_right}
+        self.reqId_to_contract[order_id_2] = {"ticker": ticker, "exchange": "NASDAQOM", "exp": option_exp, "strike": option_strike, "right": opt_right}
 
-            # self.reqContractDetails(req_order_id, opt_contract)
+        opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right, exchange = "PSE")
+        opt_contract_NASDAQOM = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right, exchange = "NASDAQOM")
 
-            self.reqMktDepth(order_id_1, opt_contract_PSE, 10, False, [])
-            self.reqMktDepth(order_id_2, opt_contract_NASDAQOM, 10, False, [])
-        else: 
-            stock_contract = self.create_stock_contract(ticker)
-            self.reqMktDepth(order_id_1, stock_contract, 10, False, [])
+        # self.reqContractDetails(req_order_id, opt_contract)
+
+        self.reqMktDepth(order_id_1, opt_contract_PSE, 10, False, [])
+        self.reqMktDepth(order_id_2, opt_contract_NASDAQOM, 10, False, [])
+
+        print("Started Request")
 
     def updateMktDepth(self, reqId, position: int, operation: int, side: int, price: float, size):
         # Triggered by: SPY, QQQ, IWM 
         reqId, size = int(reqId), float(size)
+
+        data_now = (
+            self.reqId_to_contract[reqId]["ticker"],
+            self.reqId_to_contract[reqId]["exchange"], 
+            self.reqId_to_contract[reqId]["exp"], 
+            self.reqId_to_contract[reqId]["strike"],
+            self.reqId_to_contract[reqId]["right"],
+            position, 
+            operation,
+            side,
+            price, 
+            size, 
+            time.perf_counter_ns()
+        )
+        
+        with self.tick_data_collection_lock: 
+            
+            self.tick_data_collection.append(data_now)
+
+            if (len(self.tick_data_collection) > 1000): 
+                app.wake_db_worker.set()
+
         print("UpdateMarketDepth. ReqId:", reqId, "Position:", position, "Operation:", operation, "Side:", side, "Price:", price, "Size:", size)
             
     def updateMktDepthL2(self, reqId, position: int, marketMaker: str, operation: int, side: int, price: float, size, isSmartDepth: bool):
@@ -367,6 +386,12 @@ class TestApp(EClient, EWrapper):
     def cancel_L2(self, reqId): 
         self.cancelMktDepth(reqId, False)
         print("cancelled L2 MKT Data")
+    
+    def shutdown_l2_opt_connection(self):
+
+        print(self.reqId_to_contract)
+        for reqId, v in self.reqId_to_contract.items(): 
+            self.cancelMktDepth(reqId, False)
     
     ##! Level 2 Market Data
 
@@ -597,11 +622,22 @@ class TestApp(EClient, EWrapper):
 
 
 
+# ================= DB Thread =================
 
+def db_worker():
+    while not stop_event.is_set():
+        app.wake_db_worker.clear()
+        app.wake_db_worker.wait()
 
+        with app.tick_data_collection_lock:
+            retreived_data = app.tick_data_collection.copy()
+            app.tick_data_collection.clear()
 
+        if (len(retreived_data) > 0):
+            add(retreived_data)
     
-
+    print("DB WOrker Exited")
+    
 
 # ================= Live Trading =================
 
@@ -625,13 +661,16 @@ def setup_app_and_get_order_id(app, start_trade = False):
 # ================= Main Thread =================
 
 if __name__ == "__main__":
-
-    start_time = time.time()
+    
+    add([("Starter", "Starter", "20000101", -1, "Starter", -1, -1, -1, -1, -1, time.perf_counter_ns())]) # makes sure that psql works
+    
     app = TestApp()
 
     ib_thread = setup_app_and_get_order_id(app, start_trade = True)
+    db_worker_thread = threading.Thread(target=db_worker, daemon=True)
+    db_worker_thread.start()
 
-    tickers = ["IWM"] #"SPY", "QQQ", "IWM", "AAPL", "TSLA", "AMD"] # , "MSFT", "TSLA", "JPM", "BAC", "GS"
+    tickers = ["QQQ"]
 
     # SPY QQQ IWM AAPL TSLA AMD, META MSFT
     
@@ -643,17 +682,27 @@ if __name__ == "__main__":
     
     # app.check_l2_exchanges()
     
-    # app.reqL2(tickers[0], strike_pos = 0 , exp_pos= 0, opt_right= "C", opt = True)
-    app.req_top_of_book_tick_data(tickers[0], strike_pos = 0 , exp_pos= 0, opt_right= "C", opt = False)
-    # app.reqL2(tickers[0], strike_pos = 0 , exp_pos= 0, opt_right= "C", opt = True)
-    time.sleep(1)
+    app.req_opt_L2(tickers[0], strike_pos = 0 , exp_pos= 1, opt_right= "C")
+    # app.req_top_of_book_tick_data(tickers[0], strike_pos = 0 , exp_pos= 0, opt_right= "C", opt = False)
+    
+    
+    time.sleep(5)
+    print(2)
     
     # app.load_options()
     # app.save_options()
     # print(app.options_meta_data)
 
-    app.disconnect()
+    app.shutdown_l2_opt_connection()
+
+    stop_event.set()
+    app.wake_db_worker.set() 
+    db_worker_thread.join()
+
+    app.disconnect()    
     ib_thread.join()
+    
+    pull()
   
     
     
