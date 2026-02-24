@@ -63,7 +63,6 @@ da = [("Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, time.perf_
 
 def add(data):
 
-    print(1)
     conn = psycopg.connect(DB_CONFIG)
     cur = conn.cursor()
 
@@ -90,6 +89,7 @@ def pull():
     print(df.head())
     print(df.shape)
     conn.close()
+    return df
 
 
 if __name__ == "__main__":
