@@ -7,7 +7,7 @@ import threading
 from threading import Event, Thread, Semaphore, Lock
 from ibapi.common import BarData
 import pandas as pd
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 import time as py_time
 from collections import deque
 import warnings
@@ -124,7 +124,7 @@ class TestApp(EClient, EWrapper):
             print(f"{p} \n")
         self.positions_ready.set() 
 
-    def create_stock_contract(self, symbol):
+    def create_stock_contract(self, symbol: str): # -> Contract
         """
         Creates a contract for a specified stock symbol
         """
@@ -136,7 +136,7 @@ class TestApp(EClient, EWrapper):
         contract.currency = "USD"
         return contract
     
-    def create_opt_contract(self, symbol: str, strike: float, exp: str, right: str, exchange: str) -> Contract:
+    def create_opt_contract(self, symbol: str, strike: float, exp: str, right: str, exchange: str): # -> Contract
         """
         Creates an IBKR Option Contract.
 
@@ -590,17 +590,25 @@ class TestApp(EClient, EWrapper):
 
     def req_top_of_book_tick_data(self,ticker):
         """
-        STK ONLY
+        Real time tick-by-tick data is currently NOT available for OPTIONS. Historical tick-by-tick data is available.
         """
 
         with self.order_id_lock:
             order_id = self.order_id
             self.order_id += 1
 
-        self.reqId_to_stock_contract[order_id] = {"ticker": ticker, "exchange": "SMART", "exp": "20000101", "strike": -1, "right": "N"}
          
-        stock_contract = self.create_stock_contract(ticker)
-        self.reqTickByTickData(order_id, stock_contract, "BidAsk", 0, True)
+        option_strike = self.options_meta_data[ticker]['strike'][0]
+        option_exp = self.options_meta_data[ticker]['exp'][0]
+
+        self.reqId_to_option_contract[order_id] = {"ticker": ticker, "exchange": "PSE", "exp": option_exp, "strike": option_strike, "right": "C"}
+        
+        opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = "C", exchange = "SMART")
+        
+        # self.reqId_to_stock_contract[order_id] = {"ticker": ticker, "exchange": "SMART", "exp": "20000101", "strike": -1, "right": "N"}
+        # stock_contract = self.create_stock_contract(ticker)
+
+        self.reqTickByTickData(order_id, opt_contract_PSE, "BidAsk", 0, True) #BidAsk
         print(f"Establishing request for STK: {ticker}")
     
     def tickByTickAllLast(self, reqId: int, tickType: int, time: int, price: float, size, tickAtrribLast, exchange: str,specialConditions: str):
@@ -664,9 +672,170 @@ class TestApp(EClient, EWrapper):
 
     ##! Top of Book Live Tick Data
 
+    ## L1 Options Market Data
+
+    def req_L1_OPT_Market_Data(self, ticker):
+
+        with self.order_id_lock:
+            order_id = self.order_id
+            self.order_id += 1
+        
+        option_strike = self.options_meta_data[ticker]['strike'][0]
+        option_exp = self.options_meta_data[ticker]['exp'][0]
+
+        self.reqId_to_option_contract[order_id] = {"ticker": ticker, "exchange": "SMART", "exp": option_exp, "strike": option_strike, "right": "C"}
+        
+        opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = "C", exchange = "SMART")
+        
+        self.reqMktData(order_id, opt_contract_PSE, "", False, False, [])
     
+    def tickGeneric(self, reqId, tickType, value: float):
+        
+        print("TickGeneric. TickerId:", reqId, "TickType:", tickType, "Value:", value)
+    
+    def tickPrice(self, reqId, tickType, price: float, attrib):
+        
+        print("tickPrice. TickerId:", reqId, "TickType:", tickType, "Price:", price, "Attribute:", attrib)
+    
+    def tickSize(self, reqId, tickType, size):
+        
+        print("TickSize. TickerId:", reqId, "TickType:", tickType, "Size: ", size)
+    
+    def tickString(self, reqId, tickType, value: str):
+
+        print("TickString. TickerId:", reqId, "Type:", tickType, "Value:", value)
+
+    def tickReqParams(self, tickerId:int, minTick:float, bboExchange:str, snapshotPermissions:int):
+        
+        print("TickReqParams. TickerId:", tickerId, "MinTick:", minTick, "BboExchange:", bboExchange, "SnapshotPermissions:", snapshotPermissions)
+
+    def cancel_req_L1_OPT_Market_Data(self):
+        
+        self.cancelMktData(2001)
+
+    ##! L1 Options Market Data
+
+    ## Historical tick by tick (Sales & Time)
+
+    def req_Historical_tick_by_tick_data(self, ticker: str): # -> None
+        """
+        Calls Historical Sales and Time Data (aka Top-Of-Book) for OPT
+        
+        Triggers (xor): 
+            -   historicalTicks
+            -   historicalTicksBidAsk
+            -   historicalTicksLast
+        
+        Output Time: 
+            -   1 sec (in Unix since 1970-01-01)
+            -   Fills From back descending (aka got 1000 ticks from last 137 seconds = 2 min)
+        """
+
+        with self.order_id_lock:
+            order_id = self.order_id
+            self.order_id += 1
+        
+        option_strike = self.options_meta_data[ticker]['strike'][0]
+        option_exp = self.options_meta_data[ticker]['exp'][0]
+
+        self.reqId_to_option_contract[order_id] = {"ticker": ticker, "exchange": "SMART", "exp": option_exp, "strike": option_strike, "right": "C"}
+        
+        opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = "C", exchange = "SMART")
+        
+        self.reqHistoricalTicks(order_id, opt_contract_PSE, "20260225 09:30:00 US/Eastern", "20260225 10:30:00 US/Eastern", 1000, "Midpoint", 1, True, [])
+        # "Bid_Ask, Midpoint, or Trades"
+    
+    def historicalTicks(self, reqId: int, ticks, done: bool):
+        """
+        Triggered by 'Midpoint'
+
+        Outputs: 
+            -   ReqId
+            -   Time (Unix sec)
+            -   Price
+            -   Size = 0 (always)
+        """
+
+        for tick in ticks:
+            print("historicalTicks. ReqId:", reqId, tick)
+        
+        print("---------------------------------")
+        
+        print("historicalTicksBidAsk. ReqId:", reqId, ticks[0])
+        print("historicalTicksBidAsk. ReqId:", reqId, ticks[-1])
+        print(f"size of ticks: {len(ticks)}")
+        print(done)
+            
+    def historicalTicksBidAsk(self, reqId: int, ticks, done: bool):
+        """
+        Triggered by 'Bid_Ask'
+
+        Outputs: 
+            -   ReqId
+            -   Time (Unix sec)
+            -   PriceBid
+            -   PriceAsk
+            -   SizeBid = 1 (always)
+            -   SizeAsk = 1 (always)
+        """
+
+        for tick in ticks:
+            print("historicalTicksBidAsk. ReqId:", reqId, tick)
+        
+        print("---------------------------------")
+        
+        print("historicalTicksBidAsk. ReqId:", reqId, ticks[0])
+        print("historicalTicksBidAsk. ReqId:", reqId, ticks[-1])
+        print(f"size of ticks: {len(ticks)}")
+        print(done)
+
+    def historicalTicksLast(self, reqId: int, ticks, done: bool):
+        """
+        Triggered by 'Trades'
+
+        Outputs: 
+            -   ReqId
+            -   Time (Unix sec)
+            -   Price
+            -   Size
+            -   Exchange
+        """
+
+        for tick in ticks:
+            print("HistoricalTickLast. ReqId:", reqId, tick)
+
+        print("---------------------------------")
+
+        print("HistoricalTickLast. ReqId:", reqId, ticks[0])
+        print("HistoricalTickLast. ReqId:", reqId, ticks[-1])
+        print(f"size of ticks: {len(ticks)}")
+        
+    ##! Historical tick by tick (Sales & Time)
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+def unix_to_est_str(unix_seconds: int): # -> str
+    """
+    Convert Unix epoch seconds to human-readable US/Eastern datetime string.
+    Handles DST automatically.
+    """
+    eastern = ZoneInfo("America/New_York")
+    dt = datetime.fromtimestamp(unix_seconds, eastern)
+    return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+# ================= Time =================
 
 def seconds_until_market_close():
     eastern = ZoneInfo("America/New_York")
@@ -738,7 +907,7 @@ if __name__ == "__main__":
     db_worker_thread = threading.Thread(target=db_worker, daemon=True)
     db_worker_thread.start()
 
-    tickers = ["SPY", "QQQ", "IWM"]
+    tickers = ["SPY"] #, "QQQ", "IWM"]
 
     # SPY QQQ IWM AAPL TSLA AMD, META MSFT
     
@@ -756,20 +925,23 @@ if __name__ == "__main__":
         py_time.sleep(sleep_till_open)
 
     for ticker in tickers:
-        app.req_top_of_book_tick_data(ticker)
-        app.req_opt_L2(ticker, strike_pos = 0 , exp_pos= 0, opt_right= "C")
-        py_time.sleep(1)
+        app.req_Historical_tick_by_tick_data(ticker)
+        # app.req_L1_OPT_Market_Data(ticker)
+        # app.req_top_of_book_tick_data(ticker)
+        # app.req_opt_L2(ticker, strike_pos = 0 , exp_pos= 0, opt_right= "C")
         # 2 Exechanges, 2 strikes, 2 exps, 2 rights
         # IB only suports 3 MKT Depth Streams
+    py_time.sleep(2)
+    print(unix_to_est_str(1772029820))
 
     # Sleep Till Market Close
-    sleep_till_close = seconds_until_market_close()
-    print(f"Sleeping for {sleep_till_close} sec, {sleep_till_close / 60} minues, {sleep_till_close / 3600} hours")
-    py_time.sleep(sleep_till_close)
+    # sleep_till_close = seconds_until_market_close()
+    # print(f"Sleeping for {sleep_till_close} sec, {sleep_till_close / 60} minues, {sleep_till_close / 3600} hours")
+    # py_time.sleep(sleep_till_close)
 
     # Shutdown Streams
-    app.shutdown_l2_opt_connection()
-    app.shutdown_top_of_book_stk_connection()
+    # app.shutdown_l2_opt_connection()
+    # app.shutdown_top_of_book_stk_connection()
 
     stop_event.set()
     app.wake_db_worker.set() 
