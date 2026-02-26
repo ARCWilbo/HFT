@@ -23,35 +23,43 @@ DB_CONFIG = "dbname=hft_db user=arcwilbo"
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS option_orders (
     id BIGSERIAL PRIMARY KEY,
+    reqId INTEGER NOT NULL,
     ticker TEXT NOT NULL,
     exchange TEXT NOT NULL,
     option_exp DATE NULL,
     strike DOUBLE PRECISION NULL,
     option_right TEXT,
+    isOption INTEGER NOT NULL,
     position INTEGER NOT NULL,
     operation INTEGER NOT NULL,
     side INTEGER NOT NULL,
     price DOUBLE PRECISION NOT NULL,
     size INTEGER NOT NULL,
+    tickType INTEGER NOT NULL,
+    tickString TEXT NOT NULL,
     event_timestamp BIGINT NOT NULL
 );
 """
 
 INSERT_SQL = """
 INSERT INTO option_orders (
+    reqId,
     ticker,
     exchange,
     option_exp,
     strike,
     option_right,
+    isOption,
     position,
     operation,
     side,
     price,
     size, 
+    tickType,
+    tickString,
     event_timestamp
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 QUERY = """
@@ -59,7 +67,7 @@ SELECT *
 FROM option_orders
 ORDER BY event_timestamp DESC;
 """
-da = [("Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, time.perf_counter_ns())] * 1
+da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", time.perf_counter_ns())] * 1
 
 def add(data):
 

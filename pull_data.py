@@ -28,6 +28,21 @@ warnings.filterwarnings("ignore", category=FutureWarning, message=".*weights_onl
 
 stop_event = Event()
 
+TickType= {
+    0: "BidSize", 
+    1: "BidPrice", 
+    2: "AskPrice", 
+    3: "AskSize", 
+    4: "LastPrice (Price of Most Recent Trade)", 
+    5: "LastSize (Volume of Most Recent Trade)", 
+    6: "High (Highest Price of the Day)", 
+    7: "Low (Lowest Price of the Day)", 
+    8: "Volume (Daily)",
+    32: "BidExchange (Exchange Posting the Best Bid Price)",
+    33: "AskExchange (Exchange Posting the Best Ask Price)",
+    45: "LastTimeStamp (Time of Last Trade in Unix)"
+}
+
 class TestApp(EClient, EWrapper):
     """ 
     IBKR Connection to place requests through TWS API
@@ -59,13 +74,26 @@ class TestApp(EClient, EWrapper):
         # Options Meta Data 
         self.options_meta_data = {}
 
-        # Tick Data Collection 
+        # Stroing Data in PSQL
         self.tick_data_collection_lock = Lock()
         self.wake_db_worker = Event()
         self.tick_data_collection = []
-        self.reqId_to_option_contract = {} # L2 tick data for options
-        self.reqId_to_stock_contract = {} # tick by tick for top of book stock 
         self.data_col_counter = 0
+        self.min_data_size_for_push = 1000
+
+        # L2 STK Tick Data
+        self.reqId_to_L2_STK_Contract = {}
+
+        # L1 STK Tick-By-Tick Data (No OPT)
+        self.reqId_to_stock_tick_by_tick_contract = {}
+
+        # L1 OPT Top-Of-Book
+        self.reqId_to_L1_Option_Contract = {}
+
+        # L1 Historical Top-Of-Book
+        self.reqId_to_Historical_option_contract = {}
+
+        
 
 
     def nextValidId(self, orderId: int):
@@ -124,7 +152,7 @@ class TestApp(EClient, EWrapper):
             print(f"{p} \n")
         self.positions_ready.set() 
 
-    def create_stock_contract(self, symbol: str): # -> Contract
+    def create_stock_contract(self, symbol: str, exchange: str = "SMART"): # -> Contract
         """
         Creates a contract for a specified stock symbol
         """
@@ -132,7 +160,7 @@ class TestApp(EClient, EWrapper):
         contract = Contract()
         contract.symbol = symbol
         contract.secType = "STK"
-        contract.exchange = "SMART"
+        contract.exchange = exchange
         contract.currency = "USD"
         return contract
     
@@ -328,43 +356,45 @@ class TestApp(EClient, EWrapper):
     ##################### ---------------- New Code ---------------- #####################
 
     ## Level 2 Market Data
-    def req_opt_L2(self, ticker, strike_pos: int, exp_pos: int, opt_right: str):
+    def req_opt_L2(self, ticker): # -> None
+        """
+        Starting L2 Tick Data STK Stream
+
+        Note: 
+            -   IB only suports 3 MKT Depth Streams
+        """
        
-        print(f"establishing request for L2: {ticker} - {opt_right}, {exp_pos} with strike = {strike_pos}")
+        print(f"establishing request for L2: {ticker} on Exchange: PSE")
 
         with self.order_id_lock:
             order_id_1 = self.order_id
             self.order_id +=1
         
-         
-        option_strike = self.options_meta_data[ticker]['strike'][strike_pos]
-        option_exp = self.options_meta_data[ticker]['exp'][exp_pos]
+        self.reqId_to_L2_STK_Contract[order_id_1] = {"ticker": ticker, "exchange": "PSE"}
+        stock_contract = self.create_stock_contract(ticker, exchange="PSE")
 
-        self.reqId_to_option_contract[order_id_1] = {"ticker": ticker, "exchange": "PSE", "exp": option_exp, "strike": option_strike, "right": opt_right}
+        self.reqMktDepth(order_id_1, stock_contract, 10, False, [])
         
-        opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right, exchange = "PSE")
-        
-        # self.reqContractDetails(req_order_id, opt_contract)
-
-        self.reqMktDepth(order_id_1, opt_contract_PSE, 10, False, [])
-        
-        print("Started Request")
 
     def updateMktDepth(self, reqId, position: int, operation: int, side: int, price: float, size):
         # Triggered by: SPY, QQQ, IWM 
         reqId, size = int(reqId), float(size)
 
         data_now = (
-            self.reqId_to_option_contract[reqId]["ticker"],
-            self.reqId_to_option_contract[reqId]["exchange"], 
-            self.reqId_to_option_contract[reqId]["exp"], 
-            self.reqId_to_option_contract[reqId]["strike"],
-            self.reqId_to_option_contract[reqId]["right"],
-            position, 
-            operation,
-            side,
-            price, 
-            size, 
+            reqId,
+            self.reqId_to_L2_STK_Contract[reqId]["ticker"],
+            self.reqId_to_L2_STK_Contract[reqId]["exchange"], 
+            "20000101", 
+            0,
+            "STK",
+            0, # isOption
+            position, # position
+            operation, # Operation
+            side, # side
+            price, # price
+            size, # size
+            -1, # tickType
+            "", # tickString
             py_time.perf_counter_ns()
         )
         
@@ -372,7 +402,7 @@ class TestApp(EClient, EWrapper):
             
             self.tick_data_collection.append(data_now)
 
-            if (len(self.tick_data_collection) > 1000): 
+            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
                 app.wake_db_worker.set()
                 self.data_col_counter +=1 
                 print(f"{self.data_col_counter * 1000} cols")
@@ -382,18 +412,13 @@ class TestApp(EClient, EWrapper):
     def updateMktDepthL2(self, reqId, position: int, marketMaker: str, operation: int, side: int, price: float, size, isSmartDepth: bool):
         reqId, size = int(reqId), float(size)
         print("UpdateMarketDepthL2. ReqId:", reqId, "Position:", position, "MarketMaker:", marketMaker, "Operation:", operation, "Side:", side, "Price:", price, "Size:", size, "isSmartDepth:", isSmartDepth)
-
-    def cancel_L2(self, reqId): 
-        self.cancelMktDepth(reqId, False)
-        print("cancelled L2 MKT Data")
     
     def shutdown_l2_opt_connection(self):
 
-        # print(self.reqId_to_option_contract)
-        for reqId, v in self.reqId_to_option_contract.items(): 
+        for reqId, v in self.reqId_to_L2_STK_Contract.items(): 
             self.cancelMktDepth(reqId, False)
         
-        print("ALL L2 (OPT) Streams Closed")
+        print("ALL L2 (STK) Streams Closed")
     
     ##! Level 2 Market Data
 
@@ -586,9 +611,9 @@ class TestApp(EClient, EWrapper):
 
     ##! Checking Accepted Market Data Exchanges 
 
-    ## Top of Book Live Tick Data
+    ## Top of Book Live Tick By Tick Data (No OPT)
 
-    def req_top_of_book_tick_data(self,ticker):
+    def req_top_of_book_tick_data(self,ticker: str): # -> None
         """
         Real time tick-by-tick data is currently NOT available for OPTIONS. Historical tick-by-tick data is available.
         """
@@ -597,18 +622,13 @@ class TestApp(EClient, EWrapper):
             order_id = self.order_id
             self.order_id += 1
 
-         
-        option_strike = self.options_meta_data[ticker]['strike'][0]
-        option_exp = self.options_meta_data[ticker]['exp'][0]
+        stock_contract = self.create_stock_contract(ticker)
 
-        self.reqId_to_option_contract[order_id] = {"ticker": ticker, "exchange": "PSE", "exp": option_exp, "strike": option_strike, "right": "C"}
-        
-        opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = "C", exchange = "SMART")
-        
-        # self.reqId_to_stock_contract[order_id] = {"ticker": ticker, "exchange": "SMART", "exp": "20000101", "strike": -1, "right": "N"}
-        # stock_contract = self.create_stock_contract(ticker)
+        req_data_type = "BidAsk"
 
-        self.reqTickByTickData(order_id, opt_contract_PSE, "BidAsk", 0, True) #BidAsk
+        self.reqId_to_stock_tick_by_tick_contract = {"ticker": ticker, "Exchange": "SMART", "req_data_type": req_data_type}
+
+        self.reqTickByTickData(order_id, stock_contract,req_data_type, 0, True) #BidAsk
         print(f"Establishing request for STK: {ticker}")
     
     def tickByTickAllLast(self, reqId: int, tickType: int, time: int, price: float, size, tickAtrribLast, exchange: str,specialConditions: str):
@@ -617,44 +637,7 @@ class TestApp(EClient, EWrapper):
     def tickByTickBidAsk(self, reqId: int, time: int, bidPrice: float, askPrice: float, bidSize, askSize, tickAttribBidAsk):
         # 0 is ask 
         # 1 is bid
-        data_now_1 = (
-            self.reqId_to_stock_contract[reqId]["ticker"],
-            self.reqId_to_stock_contract[reqId]["exchange"], 
-            self.reqId_to_stock_contract[reqId]["exp"], 
-            self.reqId_to_stock_contract[reqId]["strike"],
-            self.reqId_to_stock_contract[reqId]["right"],
-            1, 
-            1,
-            0,
-            askPrice, 
-            askSize, 
-            py_time.perf_counter_ns()
-        )
-        data_now_2 = (
-            self.reqId_to_stock_contract[reqId]["ticker"],
-            self.reqId_to_stock_contract[reqId]["exchange"], 
-            self.reqId_to_stock_contract[reqId]["exp"], 
-            self.reqId_to_stock_contract[reqId]["strike"],
-            self.reqId_to_stock_contract[reqId]["right"],
-            1, 
-            1,
-            1,
-            bidPrice, 
-            bidSize, 
-            py_time.perf_counter_ns()
-        )
-        
-        with self.tick_data_collection_lock: 
-            
-            self.tick_data_collection.append(data_now_1)
-            self.tick_data_collection.append(data_now_2)
-
-            if (len(self.tick_data_collection) > 1000): 
-                app.wake_db_worker.set()
-                self.data_col_counter +=1 
-                print(f"{self.data_col_counter * 1000} cols")
-
-        # print("BidAsk. ReqId:", reqId, "Time:", time, "BidPrice:", bidPrice, "AskPrice:", askPrice, "BidSize:", bidSize, "AskSize:", askSize, "BidPastLow:", tickAttribBidAsk.bidPastLow, "AskPastHigh:", tickAttribBidAsk.askPastHigh)
+        print("BidAsk. ReqId:", reqId, "Time:", time, "BidPrice:", bidPrice, "AskPrice:", askPrice, "BidSize:", bidSize, "AskSize:", askSize, "BidPastLow:", tickAttribBidAsk.bidPastLow, "AskPastHigh:", tickAttribBidAsk.askPastHigh)
     
     def tickByTickMidPoint(self, reqId: int, time: int, midPoint: float):
         print("Midpoint. ReqId:", reqId, "Time:", time, "MidPoint:", midPoint)
@@ -664,44 +647,147 @@ class TestApp(EClient, EWrapper):
     
     def shutdown_top_of_book_stk_connection(self):
     
-        # print(self.reqId_to_stock_contract)
-        for reqId, v in self.reqId_to_stock_contract.items(): 
+        for reqId, v in self.reqId_to_stock_tick_by_tick_contract.items(): 
             self.cancelTickByTickData(reqId)
         
         print("ALL Top of Book (STK) Streams Closed")
 
-    ##! Top of Book Live Tick Data
+    ##! Top of Book Live Tick By Tick Data (No OPT)
 
     ## L1 Options Market Data
 
-    def req_L1_OPT_Market_Data(self, ticker):
+    def req_L1_OPT_Market_Data(self, ticker: str, exp_pos: int, strike_pos: int, right: str): # -> None
+        """
+        Return Order: 
+        1. 45 - LastTime 
+        2. 4 - LastPrice
+        3. 5 - LastSize (prints twice)
+        """
 
         with self.order_id_lock:
             order_id = self.order_id
             self.order_id += 1
         
-        option_strike = self.options_meta_data[ticker]['strike'][0]
-        option_exp = self.options_meta_data[ticker]['exp'][0]
+        option_strike = self.options_meta_data[ticker]['strike'][strike_pos]
+        option_exp = self.options_meta_data[ticker]['exp'][exp_pos]
 
-        self.reqId_to_option_contract[order_id] = {"ticker": ticker, "exchange": "SMART", "exp": option_exp, "strike": option_strike, "right": "C"}
+        self.reqId_to_L1_Option_Contract[order_id] = {"ticker": ticker, "reqId": order_id, "exchange": "SMART", "exp": option_exp, "strike": option_strike, "right": right}
         
-        opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = "C", exchange = "SMART")
+        opt_contract_SMART = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = right, exchange = "SMART")
         
-        self.reqMktData(order_id, opt_contract_PSE, "", False, False, [])
-    
+        self.reqMktData(order_id, opt_contract_SMART, "", False, False, [])
+        print(f"Starting L1 OPT Market Stream: {self.reqId_to_L1_Option_Contract[order_id]}")
+
     def tickGeneric(self, reqId, tickType, value: float):
         
         print("TickGeneric. TickerId:", reqId, "TickType:", tickType, "Value:", value)
     
     def tickPrice(self, reqId, tickType, price: float, attrib):
+        """
+        Triggered by TickTypes: 1 - BidPrice, 2 - AskPrice, 4 - LastPrice, 
+        """
+
+        reqId, tickType = int(reqId), int(tickType)
+
+        data_now = (
+            reqId,
+            self.reqId_to_L1_Option_Contract[reqId]["ticker"],
+            self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
+            self.reqId_to_L1_Option_Contract[reqId]["exp"], 
+            self.reqId_to_L1_Option_Contract[reqId]["strike"],
+            self.reqId_to_L1_Option_Contract[reqId]["right"],
+            1, # isOption
+            1, # position
+            1, # Operation
+            1, # side
+            price, # price
+            0, # size
+            tickType, # tickType
+            "", # tickString
+            py_time.perf_counter_ns()
+        )
+
+        with self.tick_data_collection_lock: 
+            
+            self.tick_data_collection.append(data_now)
+
+            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
+                app.wake_db_worker.set()
+                self.data_col_counter +=1 
+                print(f"{self.data_col_counter * 1000} cols")
         
         print("tickPrice. TickerId:", reqId, "TickType:", tickType, "Price:", price, "Attribute:", attrib)
     
     def tickSize(self, reqId, tickType, size):
+        """
+        Triggered by TickTypes: 0 - BidExchange, 3 - AskExchange, 4 - LastTime, 6 - Low, 7 - High, 9 - Prev Day Close Price
+        """
         
+        reqId, tickType = int(reqId), int(tickType)
+
+        data_now = (
+            reqId,
+            self.reqId_to_L1_Option_Contract[reqId]["ticker"],
+            self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
+            self.reqId_to_L1_Option_Contract[reqId]["exp"], 
+            self.reqId_to_L1_Option_Contract[reqId]["strike"],
+            self.reqId_to_L1_Option_Contract[reqId]["right"],
+            1, # isOption
+            1, # position
+            1, # Operation
+            1, # side
+            0, # price
+            size, # size
+            tickType, # tickType
+            "", # tickString
+            py_time.perf_counter_ns()
+        )
+
+        with self.tick_data_collection_lock: 
+            
+            self.tick_data_collection.append(data_now)
+
+            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
+                app.wake_db_worker.set()
+                self.data_col_counter +=1 
+                print(f"{self.data_col_counter * 1000} cols")
+
         print("TickSize. TickerId:", reqId, "TickType:", tickType, "Size: ", size)
+
     
     def tickString(self, reqId, tickType, value: str):
+        """
+        Triggered by TickTypes: 32 - BidExchange, 33 - AskExchange, 4 - LastTime
+        """
+
+        reqId, tickType = int(reqId), int(tickType)
+
+        data_now = (
+            reqId,
+            self.reqId_to_L1_Option_Contract[reqId]["ticker"],
+            self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
+            self.reqId_to_L1_Option_Contract[reqId]["exp"], 
+            self.reqId_to_L1_Option_Contract[reqId]["strike"],
+            self.reqId_to_L1_Option_Contract[reqId]["right"],
+            1, # isOption
+            1, # position
+            1, # Operation
+            1, # side
+            0, # price
+            0, # size
+            tickType, # tickType
+            value, # tickString
+            py_time.perf_counter_ns()
+        )
+
+        with self.tick_data_collection_lock: 
+            
+            self.tick_data_collection.append(data_now)
+
+            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
+                app.wake_db_worker.set()
+                self.data_col_counter +=1 
+                print(f"{self.data_col_counter * 1000} cols")
 
         print("TickString. TickerId:", reqId, "Type:", tickType, "Value:", value)
 
@@ -710,8 +796,16 @@ class TestApp(EClient, EWrapper):
         print("TickReqParams. TickerId:", tickerId, "MinTick:", minTick, "BboExchange:", bboExchange, "SnapshotPermissions:", snapshotPermissions)
 
     def cancel_req_L1_OPT_Market_Data(self):
+        """
+        Cancels all L1 OPT Market Data Streams
+        """
+        print("Cancelling L1 OPT Market Stream!")
+
+        for u, v in self.reqId_to_L1_Option_Contract.items():
+            self.cancelMktData(u)
+            print(f"    Cancelled: {v}")
         
-        self.cancelMktData(2001)
+        print("All L1 OPT Market Stream are Cancelled")
 
     ##! L1 Options Market Data
 
@@ -738,7 +832,7 @@ class TestApp(EClient, EWrapper):
         option_strike = self.options_meta_data[ticker]['strike'][0]
         option_exp = self.options_meta_data[ticker]['exp'][0]
 
-        self.reqId_to_option_contract[order_id] = {"ticker": ticker, "exchange": "SMART", "exp": option_exp, "strike": option_strike, "right": "C"}
+        self.reqId_to_Historical_option_contract[order_id] = {"ticker": ticker, "exchange": "SMART", "exp": option_exp, "strike": option_strike, "right": "C"}
         
         opt_contract_PSE = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = "C", exchange = "SMART")
         
@@ -899,15 +993,15 @@ if __name__ == "__main__":
 
     print(seconds_until_market_close())
     
-    add([("Starter", "Starter", "20000101", -1, "Starter", -1, -1, -1, -1, -1, py_time.perf_counter_ns())]) # makes sure that psql works
-    
+    da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", py_time.perf_counter_ns())] * 1
+
     app = TestApp()
 
     ib_thread = setup_app_and_get_order_id(app, start_trade = True)
     db_worker_thread = threading.Thread(target=db_worker, daemon=True)
     db_worker_thread.start()
 
-    tickers = ["SPY"] #, "QQQ", "IWM"]
+    tickers = ["SPY", "QQQ", "IWM"]
 
     # SPY QQQ IWM AAPL TSLA AMD, META MSFT
     
@@ -925,23 +1019,24 @@ if __name__ == "__main__":
         py_time.sleep(sleep_till_open)
 
     for ticker in tickers:
-        app.req_Historical_tick_by_tick_data(ticker)
-        # app.req_L1_OPT_Market_Data(ticker)
-        # app.req_top_of_book_tick_data(ticker)
-        # app.req_opt_L2(ticker, strike_pos = 0 , exp_pos= 0, opt_right= "C")
-        # 2 Exechanges, 2 strikes, 2 exps, 2 rights
-        # IB only suports 3 MKT Depth Streams
-    py_time.sleep(2)
-    print(unix_to_est_str(1772029820))
+        app.req_opt_L2(ticker)
+        for i in range(2): 
+            for j in range(2): 
+                for c in ["C", "P"]:
 
+                    app.req_L1_OPT_Market_Data(ticker, i, j, c)
+                    py_time.sleep(0.1)
+
+        # 2 strikes, 2 exps, 2 rights = 8 Streams / ticker
+        
     # Sleep Till Market Close
-    # sleep_till_close = seconds_until_market_close()
-    # print(f"Sleeping for {sleep_till_close} sec, {sleep_till_close / 60} minues, {sleep_till_close / 3600} hours")
-    # py_time.sleep(sleep_till_close)
+    sleep_till_close = seconds_until_market_close()
+    print(f"Sleeping for {sleep_till_close} sec, {sleep_till_close / 60} minues, {sleep_till_close / 3600} hours")
+    py_time.sleep(sleep_till_close)
 
     # Shutdown Streams
-    # app.shutdown_l2_opt_connection()
-    # app.shutdown_top_of_book_stk_connection()
+    app.cancel_req_L1_OPT_Market_Data()
+    app.shutdown_l2_opt_connection()
 
     stop_event.set()
     app.wake_db_worker.set() 
