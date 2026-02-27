@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS option_orders (
     size INTEGER NOT NULL,
     tickType INTEGER NOT NULL,
     tickString TEXT NOT NULL,
+    impliedVol DOUBLE PRECISION NOT NULL,
+    delta DOUBLE PRECISION NOT NULL,
+    optPrice DOUBLE PRECISION NOT NULL,
+    pvDividend DOUBLE PRECISION NOT NULL,
+    gamma DOUBLE PRECISION NOT NULL,
+    vega DOUBLE PRECISION NOT NULL,
+    theta DOUBLE PRECISION NOT NULL,
+    undPrice DOUBLE PRECISION NOT NULL,
     event_timestamp BIGINT NOT NULL
 );
 """
@@ -57,9 +65,17 @@ INSERT INTO option_orders (
     size, 
     tickType,
     tickString,
+    impliedVol, 
+    delta, 
+    optPrice, 
+    pvDividend, 
+    gamma, 
+    vega, 
+    theta, 
+    undPrice, 
     event_timestamp
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 QUERY = """
@@ -67,7 +83,7 @@ SELECT *
 FROM option_orders
 ORDER BY event_timestamp DESC;
 """
-da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", time.perf_counter_ns())] * 1
+da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", -1, -1, -1, -1, -1, -1, -1, -1,time.perf_counter_ns())] * 1
 
 def add(data):
 

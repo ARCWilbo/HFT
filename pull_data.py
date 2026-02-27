@@ -3,6 +3,7 @@ from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 from ibapi.order import Order 
 from ibapi.contract import ComboLeg
+from ibapi.tag_value import TagValue
 import threading
 from threading import Event, Thread, Semaphore, Lock
 from ibapi.common import BarData
@@ -395,6 +396,14 @@ class TestApp(EClient, EWrapper):
             size, # size
             -1, # tickType
             "", # tickString
+            0, # Implied Volatility
+            0, # delta
+            0, # predicted optPrice
+            0, # pvDividend
+            0, # gamma
+            0, # vega
+            0, # theta
+            0, # underlying STK Price
             py_time.perf_counter_ns()
         )
         
@@ -510,11 +519,12 @@ class TestApp(EClient, EWrapper):
         contract.conId = self.ticker_to_conId[ticker]
 
         self.historical_data_event.clear()
-        self.reqHistoricalData(order_id, contract, "", "1 W", "1 day", "MIDPOINT", 1, 1, False, [])
+        self.reqHistoricalData(order_id, contract, "", "1 W", "1 day", "TRADES", 0, 1, False, [])
         self.historical_data_event.wait(10)
 
         # Sort Data Histrical Bars and get most recent Price Close
         df = pd.DataFrame(self.intermediate_prices)
+        print(df)
         df["date"] = pd.to_datetime(df["date"])
         df.sort_values("date", ascending=False, inplace=True)
         self.conId_to_price[self.ticker_to_conId[ticker]] = df.iloc[0]["close"]
@@ -678,8 +688,51 @@ class TestApp(EClient, EWrapper):
         self.reqMktData(order_id, opt_contract_SMART, "", False, False, [])
         print(f"Starting L1 OPT Market Stream: {self.reqId_to_L1_Option_Contract[order_id]}")
 
-    def tickGeneric(self, reqId, tickType, value: float):
+    def tickOptionComputation(self, reqId, tickType, tickAttrib: int, impliedVol: float, delta: float, optPrice: float, pvDividend: float, gamma: float, vega: float, theta: float, undPrice: float):
+        """
+        Triggered by tickType: 10 - bid (OPT Greeks), 11 - (OPT Greeks), 12 - Last (OPT Greeks)
+        """
+        reqId, tickType = int(reqId), int(tickType)
         
+        data_now = (
+            reqId,
+            self.reqId_to_L1_Option_Contract[reqId]["ticker"],
+            self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
+            self.reqId_to_L1_Option_Contract[reqId]["exp"], 
+            self.reqId_to_L1_Option_Contract[reqId]["strike"],
+            self.reqId_to_L1_Option_Contract[reqId]["right"],
+            2, # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
+            1, # position
+            1, # Operation
+            1, # side
+            0, # price
+            0, # size
+            tickType, # tickType
+            "", # tickString
+            impliedVol, # Implied Volatility
+            delta, # delta
+            optPrice, # predicted optPrice
+            pvDividend, # pvDividend
+            gamma, # gamma
+            vega, # vega
+            theta, # theta
+            undPrice, # underlying STK Price
+            py_time.perf_counter_ns()
+        )
+
+        with self.tick_data_collection_lock: 
+            
+            self.tick_data_collection.append(data_now)
+
+            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
+                app.wake_db_worker.set()
+                self.data_col_counter +=1 
+                print(f"{self.data_col_counter * 1000} cols")
+
+        print("TickOptionComputation. TickerId:", reqId, "TickType:", tickType, "TickAttrib:", tickAttrib, "ImpliedVolatility:", impliedVol, "Delta:", delta, "OptionPrice:", optPrice, "pvDividend:", pvDividend, "Gamma: ", gamma, "Vega:", vega, "Theta:", theta, "UnderlyingPrice:", undPrice)
+
+    def tickGeneric(self, reqId, tickType, value: float):
+        temp = 1
         print("TickGeneric. TickerId:", reqId, "TickType:", tickType, "Value:", value)
     
     def tickPrice(self, reqId, tickType, price: float, attrib):
@@ -696,7 +749,7 @@ class TestApp(EClient, EWrapper):
             self.reqId_to_L1_Option_Contract[reqId]["exp"], 
             self.reqId_to_L1_Option_Contract[reqId]["strike"],
             self.reqId_to_L1_Option_Contract[reqId]["right"],
-            1, # isOption
+            1, # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
             1, # position
             1, # Operation
             1, # side
@@ -704,6 +757,14 @@ class TestApp(EClient, EWrapper):
             0, # size
             tickType, # tickType
             "", # tickString
+            0, # Implied Volatility
+            0, # delta
+            0, # predicted optPrice
+            0, # pvDividend
+            0, # gamma
+            0, # vega
+            0, # theta
+            0, # underlying STK Price
             py_time.perf_counter_ns()
         )
 
@@ -732,7 +793,7 @@ class TestApp(EClient, EWrapper):
             self.reqId_to_L1_Option_Contract[reqId]["exp"], 
             self.reqId_to_L1_Option_Contract[reqId]["strike"],
             self.reqId_to_L1_Option_Contract[reqId]["right"],
-            1, # isOption
+            1, # # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
             1, # position
             1, # Operation
             1, # side
@@ -740,6 +801,14 @@ class TestApp(EClient, EWrapper):
             size, # size
             tickType, # tickType
             "", # tickString
+            0, # Implied Volatility
+            0, # delta
+            0, # predicted optPrice
+            0, # pvDividend
+            0, # gamma
+            0, # vega
+            0, # theta
+            0, # underlying STK Price
             py_time.perf_counter_ns()
         )
 
@@ -769,7 +838,7 @@ class TestApp(EClient, EWrapper):
             self.reqId_to_L1_Option_Contract[reqId]["exp"], 
             self.reqId_to_L1_Option_Contract[reqId]["strike"],
             self.reqId_to_L1_Option_Contract[reqId]["right"],
-            1, # isOption
+            1, # # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
             1, # position
             1, # Operation
             1, # side
@@ -777,6 +846,14 @@ class TestApp(EClient, EWrapper):
             0, # size
             tickType, # tickType
             value, # tickString
+            0, # Implied Volatility
+            0, # delta
+            0, # predicted optPrice
+            0, # pvDividend
+            0, # gamma
+            0, # vega
+            0, # theta
+            0, # underlying STK Price
             py_time.perf_counter_ns()
         )
 
@@ -991,9 +1068,7 @@ def setup_app_and_get_order_id(app, start_trade = False):
 
 if __name__ == "__main__":
 
-    print(seconds_until_market_close())
-    
-    da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", py_time.perf_counter_ns())] * 1
+    da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", -1, -1, -1, -1, -1, -1, -1, -1,py_time.perf_counter_ns())] * 1
 
     app = TestApp()
 
@@ -1001,7 +1076,7 @@ if __name__ == "__main__":
     db_worker_thread = threading.Thread(target=db_worker, daemon=True)
     db_worker_thread.start()
 
-    tickers = ["SPY", "QQQ", "IWM"]
+    tickers = ["SPY"] #, "QQQ", "IWM"]
 
     # SPY QQQ IWM AAPL TSLA AMD, META MSFT
     
@@ -1019,13 +1094,16 @@ if __name__ == "__main__":
         py_time.sleep(sleep_till_open)
 
     for ticker in tickers:
-        app.req_opt_L2(ticker)
-        for i in range(2): 
-            for j in range(2): 
-                for c in ["C", "P"]:
+        # app.req_opt_L2(ticker)
+        app.req_L1_OPT_Market_Data(ticker, 0, 0, "C")
 
-                    app.req_L1_OPT_Market_Data(ticker, i, j, c)
-                    py_time.sleep(0.1)
+
+        # for i in range(2): 
+        #     for j in range(2): 
+        #         for c in ["C", "P"]:
+
+        #             app.req_L1_OPT_Market_Data(ticker, i, j, c)
+        #             py_time.sleep(0.1)
 
         # 2 strikes, 2 exps, 2 rights = 8 Streams / ticker
         
