@@ -18,7 +18,7 @@ createdb hft_db # to Create a db
 
 """
 
-DB_CONFIG = "dbname=hft_db user=arcwilbo"
+DB_CONFIG = "dbname=hft_db user=rishiduggal"
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS option_orders (

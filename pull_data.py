@@ -418,6 +418,30 @@ class TestApp(EClient, EWrapper):
 
         # print("UpdateMarketDepth. ReqId:", reqId, "Position:", position, "Operation:", operation, "Side:", side, "Price:", price, "Size:", size)
             
+     ## Get Options Greeks
+    def req_opt_greeks(self,ticker: str ):
+        
+        ## ticker to make contract and bool to check if it is option
+        
+        with self.order_id_lock:
+            order_id = self.order_id
+            self.order_id += 1
+
+        option_strike = self.options_meta_data[ticker]['strike'][0]
+        option_exp = self.options_meta_data[ticker]['exp'][0]
+
+        self.reqId_to_option_contract[order_id] = {"ticker": ticker, "exchange": "PSE", "exp": option_exp, "strike": option_strike, "right": opt_right}
+        
+        opt_contract = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = opt_right, exchange = "PSE")
+        
+        self.reqMktData(order_id, opt_contract, "", False, False, [])
+    
+    def update_greeks(self, reqId, tickType, tickAttrib: int, impliedVol: float, delta: float, optPrice: float, pvDividend: float, gamma: float, vega: float, theta: float, undPrice: float):
+            print("TickOptionComputation. TickerId:", reqId, "TickType:", tickType, "TickAttrib:", "ImpliedVolatility:", "Delta:",  "OptionPrice:", 
+                   "pvDividend:",  "Gamma: ",  "Vega:",  "Theta:",  "UnderlyingPrice:")
+
+        
+    
     def updateMktDepthL2(self, reqId, position: int, marketMaker: str, operation: int, side: int, price: float, size, isSmartDepth: bool):
         reqId, size = int(reqId), float(size)
         print("UpdateMarketDepthL2. ReqId:", reqId, "Position:", position, "MarketMaker:", marketMaker, "Operation:", operation, "Side:", side, "Price:", price, "Size:", size, "isSmartDepth:", isSmartDepth)
