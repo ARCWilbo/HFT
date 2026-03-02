@@ -1076,7 +1076,7 @@ if __name__ == "__main__":
     db_worker_thread = threading.Thread(target=db_worker, daemon=True)
     db_worker_thread.start()
 
-    tickers = ["SPY"] #, "QQQ", "IWM"]
+    tickers = ["SPY", "QQQ", "IWM"]
 
     # SPY QQQ IWM AAPL TSLA AMD, META MSFT
     
@@ -1094,16 +1094,14 @@ if __name__ == "__main__":
         py_time.sleep(sleep_till_open)
 
     for ticker in tickers:
-        # app.req_opt_L2(ticker)
-        app.req_L1_OPT_Market_Data(ticker, 0, 0, "C")
+        app.req_opt_L2(ticker)
+        # app.req_L1_OPT_Market_Data(ticker, 0, 0, "C")
+        for i in range(2): 
+            for j in range(2): 
+                for c in ["C", "P"]:
 
-
-        # for i in range(2): 
-        #     for j in range(2): 
-        #         for c in ["C", "P"]:
-
-        #             app.req_L1_OPT_Market_Data(ticker, i, j, c)
-        #             py_time.sleep(0.1)
+                    app.req_L1_OPT_Market_Data(ticker, i, j, c)
+                    py_time.sleep(0.1)
 
         # 2 strikes, 2 exps, 2 rights = 8 Streams / ticker
         
