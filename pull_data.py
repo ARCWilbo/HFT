@@ -8,7 +8,7 @@ import threading
 from threading import Event, Thread, Semaphore, Lock
 from ibapi.common import BarData
 import pandas as pd
-from datetime import datetime, timedelta, time, timezone
+from datetime import datetime, date, timedelta, time, timezone
 import time as py_time
 from collections import deque
 import warnings
@@ -79,8 +79,8 @@ class TestApp(EClient, EWrapper):
         self.tick_data_collection_lock = Lock()
         self.wake_db_worker = Event()
         self.tick_data_collection = []
-        self.data_col_counter = 0
-        self.min_data_size_for_push = 1000
+        self.last_push_in_sec = int(py_time.time())
+        self.already_pushed = 1
 
         # L2 STK Tick Data
         self.reqId_to_L2_STK_Contract = {}
@@ -371,8 +371,8 @@ class TestApp(EClient, EWrapper):
             order_id_1 = self.order_id
             self.order_id +=1
         
-        self.reqId_to_L2_STK_Contract[order_id_1] = {"ticker": ticker, "exchange": "PSE"}
-        stock_contract = self.create_stock_contract(ticker, exchange="PSE")
+        self.reqId_to_L2_STK_Contract[order_id_1] = {"ticker": ticker, "exchange": "ARCA"}
+        stock_contract = self.create_stock_contract(ticker, exchange="ARCA")
 
         self.reqMktDepth(order_id_1, stock_contract, 10, False, [])
         
@@ -380,6 +380,10 @@ class TestApp(EClient, EWrapper):
     def updateMktDepth(self, reqId, position: int, operation: int, side: int, price: float, size):
         # Triggered by: SPY, QQQ, IWM 
         reqId, size = int(reqId), float(size)
+
+        ts = py_time.time()
+        dt = datetime.fromtimestamp(ts)
+        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
 
         data_now = (
             reqId,
@@ -404,6 +408,7 @@ class TestApp(EClient, EWrapper):
             0, # vega
             0, # theta
             0, # underlying STK Price
+            formatted,
             py_time.perf_counter_ns()
         )
         
@@ -411,10 +416,10 @@ class TestApp(EClient, EWrapper):
             
             self.tick_data_collection.append(data_now)
 
-            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
-                app.wake_db_worker.set()
-                self.data_col_counter +=1 
-                print(f"{self.data_col_counter * 1000} cols")
+            curr_unix_time = int(py_time.time())
+            if (curr_unix_time >  self.last_push_in_sec + 30): 
+                self.wake_db_worker.set()
+                self.last_push_in_sec = curr_unix_time
 
         # print("UpdateMarketDepth. ReqId:", reqId, "Position:", position, "Operation:", operation, "Side:", side, "Price:", price, "Size:", size)
             
@@ -524,7 +529,7 @@ class TestApp(EClient, EWrapper):
 
         # Sort Data Histrical Bars and get most recent Price Close
         df = pd.DataFrame(self.intermediate_prices)
-        print(df)
+        # print(df)
         df["date"] = pd.to_datetime(df["date"])
         df.sort_values("date", ascending=False, inplace=True)
         self.conId_to_price[self.ticker_to_conId[ticker]] = df.iloc[0]["close"]
@@ -549,7 +554,7 @@ class TestApp(EClient, EWrapper):
     ##! Current Asset Price 
 
     ## Saving Option Meta Data
-    def create_options_metadata(self, ticker: str) -> None: 
+    def create_options_metadata(self, ticker: str): # -> None: 
 
         # print(self.conId_option_chain[self.ticker_to_conId[ticker]])
 
@@ -594,7 +599,7 @@ class TestApp(EClient, EWrapper):
 
         option_exps = self.conId_option_chain[self.ticker_to_conId[ticker]]['exp'][:2]
         
-        self.options_meta_data[ticker] = {"conId": self.ticker_to_conId[ticker], "price": price, "strike": ticker_strike, "exp": option_exps}
+        self.options_meta_data[ticker] = {"conId": self.ticker_to_conId[ticker], "price": price, "strike": ticker_strike, "exp": option_exps, "date": str(date.today())}
         print(self.options_meta_data[ticker])
 
     def save_options(self): 
@@ -603,7 +608,8 @@ class TestApp(EClient, EWrapper):
     
     def load_options(self): 
         with open("options_meta_data.json", "r") as f:
-            self.options_meta_data = json.load(f)
+            temp = json.load(f)
+        return temp
 
     ##! Saving Option Meta Data
 
@@ -693,6 +699,10 @@ class TestApp(EClient, EWrapper):
         Triggered by tickType: 10 - bid (OPT Greeks), 11 - (OPT Greeks), 12 - Last (OPT Greeks)
         """
         reqId, tickType = int(reqId), int(tickType)
+
+        ts = py_time.time()
+        dt = datetime.fromtimestamp(ts)
+        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
         
         data_now = (
             reqId,
@@ -717,6 +727,7 @@ class TestApp(EClient, EWrapper):
             vega, # vega
             theta, # theta
             undPrice, # underlying STK Price
+            formatted,
             py_time.perf_counter_ns()
         )
 
@@ -724,12 +735,12 @@ class TestApp(EClient, EWrapper):
             
             self.tick_data_collection.append(data_now)
 
-            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
-                app.wake_db_worker.set()
-                self.data_col_counter +=1 
-                print(f"{self.data_col_counter * 1000} cols")
+            curr_unix_time = int(py_time.time())
+            if (curr_unix_time >  self.last_push_in_sec + 30): 
+                self.wake_db_worker.set()
+                self.last_push_in_sec = curr_unix_time
 
-        print("TickOptionComputation. TickerId:", reqId, "TickType:", tickType, "TickAttrib:", tickAttrib, "ImpliedVolatility:", impliedVol, "Delta:", delta, "OptionPrice:", optPrice, "pvDividend:", pvDividend, "Gamma: ", gamma, "Vega:", vega, "Theta:", theta, "UnderlyingPrice:", undPrice)
+        # print("TickOptionComputation. TickerId:", reqId, "TickType:", tickType, "TickAttrib:", tickAttrib, "ImpliedVolatility:", impliedVol, "Delta:", delta, "OptionPrice:", optPrice, "pvDividend:", pvDividend, "Gamma: ", gamma, "Vega:", vega, "Theta:", theta, "UnderlyingPrice:", undPrice)
 
     def tickGeneric(self, reqId, tickType, value: float):
         temp = 1
@@ -741,6 +752,10 @@ class TestApp(EClient, EWrapper):
         """
 
         reqId, tickType = int(reqId), int(tickType)
+
+        ts = py_time.time()
+        dt = datetime.fromtimestamp(ts)
+        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
 
         data_now = (
             reqId,
@@ -765,6 +780,7 @@ class TestApp(EClient, EWrapper):
             0, # vega
             0, # theta
             0, # underlying STK Price
+            formatted,
             py_time.perf_counter_ns()
         )
 
@@ -772,12 +788,12 @@ class TestApp(EClient, EWrapper):
             
             self.tick_data_collection.append(data_now)
 
-            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
-                app.wake_db_worker.set()
-                self.data_col_counter +=1 
-                print(f"{self.data_col_counter * 1000} cols")
+            curr_unix_time = int(py_time.time())
+            if (curr_unix_time >  self.last_push_in_sec + 30): 
+                self.wake_db_worker.set()
+                self.last_push_in_sec = curr_unix_time
         
-        print("tickPrice. TickerId:", reqId, "TickType:", tickType, "Price:", price, "Attribute:", attrib)
+        # print("tickPrice. TickerId:", reqId, "TickType:", tickType, "Price:", price, "Attribute:", attrib)
     
     def tickSize(self, reqId, tickType, size):
         """
@@ -785,6 +801,10 @@ class TestApp(EClient, EWrapper):
         """
         
         reqId, tickType = int(reqId), int(tickType)
+
+        ts = py_time.time()
+        dt = datetime.fromtimestamp(ts)
+        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
 
         data_now = (
             reqId,
@@ -809,6 +829,7 @@ class TestApp(EClient, EWrapper):
             0, # vega
             0, # theta
             0, # underlying STK Price
+            formatted,
             py_time.perf_counter_ns()
         )
 
@@ -816,12 +837,12 @@ class TestApp(EClient, EWrapper):
             
             self.tick_data_collection.append(data_now)
 
-            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
-                app.wake_db_worker.set()
-                self.data_col_counter +=1 
-                print(f"{self.data_col_counter * 1000} cols")
+            curr_unix_time = int(py_time.time())
+            if (curr_unix_time >  self.last_push_in_sec + 30): 
+                self.wake_db_worker.set()
+                self.last_push_in_sec = curr_unix_time
 
-        print("TickSize. TickerId:", reqId, "TickType:", tickType, "Size: ", size)
+        # print("TickSize. TickerId:", reqId, "TickType:", tickType, "Size: ", size)
 
     
     def tickString(self, reqId, tickType, value: str):
@@ -830,6 +851,10 @@ class TestApp(EClient, EWrapper):
         """
 
         reqId, tickType = int(reqId), int(tickType)
+
+        ts = py_time.time()
+        dt = datetime.fromtimestamp(ts)
+        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
 
         data_now = (
             reqId,
@@ -854,6 +879,7 @@ class TestApp(EClient, EWrapper):
             0, # vega
             0, # theta
             0, # underlying STK Price
+            formatted,
             py_time.perf_counter_ns()
         )
 
@@ -862,15 +888,16 @@ class TestApp(EClient, EWrapper):
             self.tick_data_collection.append(data_now)
 
             if (len(self.tick_data_collection) > self.min_data_size_for_push): 
-                app.wake_db_worker.set()
+                self.wake_db_worker.set()
                 self.data_col_counter +=1 
                 print(f"{self.data_col_counter * 1000} cols")
 
-        print("TickString. TickerId:", reqId, "Type:", tickType, "Value:", value)
+        # print("TickString. TickerId:", reqId, "Type:", tickType, "Value:", value)
 
     def tickReqParams(self, tickerId:int, minTick:float, bboExchange:str, snapshotPermissions:int):
+        hi = 0
         
-        print("TickReqParams. TickerId:", tickerId, "MinTick:", minTick, "BboExchange:", bboExchange, "SnapshotPermissions:", snapshotPermissions)
+        # print("TickReqParams. TickerId:", tickerId, "MinTick:", minTick, "BboExchange:", bboExchange, "SnapshotPermissions:", snapshotPermissions)
 
     def cancel_req_L1_OPT_Market_Data(self):
         """
@@ -1008,11 +1035,21 @@ def unix_to_est_str(unix_seconds: int): # -> str
 
 # ================= Time =================
 
+def did_market_already_close(): 
+    eastern = ZoneInfo("America/New_York")
+    
+    now = datetime.now(eastern)
+    market_close = datetime.combine(now.date(), time(16, 15), tzinfo=eastern)
+    
+    seconds = (market_close - now).total_seconds()
+    
+    return int(seconds) < 0
+
 def seconds_until_market_close():
     eastern = ZoneInfo("America/New_York")
     
     now = datetime.now(eastern)
-    market_close = datetime.combine(now.date(), time(16, 0), tzinfo=eastern)
+    market_close = datetime.combine(now.date(), time(16, 15), tzinfo=eastern)
     
     seconds = (market_close - now).total_seconds()
     
@@ -1031,6 +1068,8 @@ def seconds_until_market_open():
 # ================= DB Thread =================
 
 def db_worker():
+
+    count = 0
     while not stop_event.is_set():
         app.wake_db_worker.clear()
         app.wake_db_worker.wait()
@@ -1038,8 +1077,16 @@ def db_worker():
         with app.tick_data_collection_lock:
             retreived_data = app.tick_data_collection.copy()
             app.tick_data_collection.clear()
-
+        
+        
         if (len(retreived_data) > 0):
+
+            ts = py_time.time()
+            dt = datetime.fromtimestamp(ts)
+            formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
+            
+            count += len(retreived_data)
+            print(f"Cols in PSQL: {count} @ {formatted}")
             add(retreived_data)
     
     print("DB WOrker Exited")
@@ -1068,7 +1115,7 @@ def setup_app_and_get_order_id(app, start_trade = False):
 
 if __name__ == "__main__":
 
-    da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", -1, -1, -1, -1, -1, -1, -1, -1,py_time.perf_counter_ns())] * 1
+    da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", -1, -1, -1, -1, -1, -1, -1, -1,"time", py_time.perf_counter_ns())] * 1
 
     app = TestApp()
 
@@ -1084,8 +1131,20 @@ if __name__ == "__main__":
         app.request_option_chain(ticker)
         app.req_historical_price(ticker)
         app.create_options_metadata(ticker)
-        
-    # Sleep Till Market Open
+    
+    current_meta_data = app.load_options()
+    ftoday = date.today()
+
+    for u, v in current_meta_data.items():
+        if ('date' in v and v['date'] == str(date.today())):
+            app.options_meta_data = current_meta_data
+        else:
+            app.save_options()
+        break
+
+
+    
+        # Sleep Till Market Open
     sleep_till_open = seconds_until_market_open()
     if (sleep_till_open == 0):
         print("MARKET IS OPEN !!!")
@@ -1095,7 +1154,6 @@ if __name__ == "__main__":
 
     for ticker in tickers:
         app.req_opt_L2(ticker)
-        # app.req_L1_OPT_Market_Data(ticker, 0, 0, "C")
         for i in range(2): 
             for j in range(2): 
                 for c in ["C", "P"]:

@@ -37,14 +37,15 @@ CREATE TABLE IF NOT EXISTS option_orders (
     size INTEGER NOT NULL,
     tickType INTEGER NOT NULL,
     tickString TEXT NOT NULL,
-    impliedVol DOUBLE PRECISION NOT NULL,
-    delta DOUBLE PRECISION NOT NULL,
-    optPrice DOUBLE PRECISION NOT NULL,
-    pvDividend DOUBLE PRECISION NOT NULL,
-    gamma DOUBLE PRECISION NOT NULL,
-    vega DOUBLE PRECISION NOT NULL,
-    theta DOUBLE PRECISION NOT NULL,
-    undPrice DOUBLE PRECISION NOT NULL,
+    impliedVol DOUBLE PRECISION,
+    delta DOUBLE PRECISION,
+    optPrice DOUBLE PRECISION,
+    pvDividend DOUBLE PRECISION,
+    gamma DOUBLE PRECISION,
+    vega DOUBLE PRECISION,
+    theta DOUBLE PRECISION,
+    undPrice DOUBLE PRECISION,
+    time TEXT NOT NULL,
     event_timestamp BIGINT NOT NULL
 );
 """
@@ -73,9 +74,10 @@ INSERT INTO option_orders (
     vega, 
     theta, 
     undPrice, 
+    time,
     event_timestamp
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 QUERY = """
@@ -83,7 +85,45 @@ SELECT *
 FROM option_orders
 ORDER BY event_timestamp DESC;
 """
-da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", -1, -1, -1, -1, -1, -1, -1, -1,time.perf_counter_ns())] * 1
+
+TABLE_SHAPE_SQL = """
+SELECT
+    (SELECT COUNT(*) FROM option_orders) AS rows,
+    (SELECT COUNT(*)
+     FROM information_schema.columns
+     WHERE table_name = 'option_orders') AS columns;
+"""
+
+TABLE_SIZE_SQL = """
+SELECT
+    pg_size_pretty(pg_relation_size('option_orders')) AS table_size,
+    pg_size_pretty(pg_indexes_size('option_orders')) AS index_size,
+    pg_size_pretty(pg_total_relation_size('option_orders')) AS total_size;
+"""
+
+da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", -1, -1, -1, -1, -1, -1, -1, -1,"time", time.perf_counter_ns())] * 1
+
+def table_stats():
+    
+    conn = psycopg.connect(DB_CONFIG)
+    cur = conn.cursor()
+
+    cur.execute(TABLE_SHAPE_SQL)
+    rows, cols = cur.fetchone()
+
+    print("\nTABLE SHAPE:")
+    print((rows, cols))
+
+    cur.execute(TABLE_SIZE_SQL)
+    table_size, index_size, total_size = cur.fetchone()
+
+    print("\nTABLE STORAGE:")
+    print("table_size:", table_size)
+    print("index_size:", index_size)
+    print("total_size:", total_size)
+
+    cur.close()
+    conn.close()
 
 def add(data):
 
@@ -117,5 +157,7 @@ def pull():
 
 
 if __name__ == "__main__":
-    add(da)
-    pull()
+    # add(da)
+    # pull()
+
+    table_stats()

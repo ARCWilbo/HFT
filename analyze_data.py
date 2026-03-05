@@ -13,6 +13,9 @@ if __name__ == "__main__":
     print("data_qqq.shape:", data_qqq.shape)
     print("data_iwm.shape:", data_iwm.shape)
 
+    print(data['time'].iloc[0], data['time'].iloc[-1])
+    print(data[data['exchange'] == "ARCA"].head())
+
     """"
     IDEAS 
     
