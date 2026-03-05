@@ -18,5 +18,5 @@ if __name__ == "__main__":
     
     1. Possibly track the same strike the whole day
     2. Find a function to get Top of Book MKT data for options too
-    
+
     """

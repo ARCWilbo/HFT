@@ -110,8 +110,10 @@ def add(data):
 def pull():
     conn = psycopg.connect(DB_CONFIG)
     df = pd.read_sql(QUERY, conn)
+    print(df.info())
     print(df.head())
     print(df.shape)
+    print((df["event_timestamp"].iloc[-1] - df["event_timestamp"].iloc[0])/1_000_000_000)
     conn.close()
     return df
 
