@@ -887,10 +887,10 @@ class TestApp(EClient, EWrapper):
             
             self.tick_data_collection.append(data_now)
 
-            if (len(self.tick_data_collection) > self.min_data_size_for_push): 
+            curr_unix_time = int(py_time.time())
+            if (curr_unix_time >  self.last_push_in_sec + 30): 
                 self.wake_db_worker.set()
-                self.data_col_counter +=1 
-                print(f"{self.data_col_counter * 1000} cols")
+                self.last_push_in_sec = curr_unix_time
 
         # print("TickString. TickerId:", reqId, "Type:", tickType, "Value:", value)
 
@@ -1142,8 +1142,6 @@ if __name__ == "__main__":
             app.save_options()
         break
 
-
-    
         # Sleep Till Market Open
     sleep_till_open = seconds_until_market_open()
     if (sleep_till_open == 0):
