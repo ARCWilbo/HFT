@@ -379,39 +379,32 @@ class TestApp(EClient, EWrapper):
 
     def updateMktDepth(self, reqId, position: int, operation: int, side: int, price: float, size):
         # Triggered by: SPY, QQQ, IWM 
-        reqId, size = int(reqId), float(size)
 
+        # Time Stamp Record Keeping
+        received_ts = py_time.time_ns()
         ts = py_time.time()
         dt = datetime.fromtimestamp(ts)
-        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
+        human_readable_ts = dt.strftime("%m/%d/%Y %H:%M:%S")
+
+        reqId, size = int(reqId), float(size)
 
         data_now = (
+            "STK",
             reqId,
             self.reqId_to_L2_STK_Contract[reqId]["ticker"],
             self.reqId_to_L2_STK_Contract[reqId]["exchange"], 
-            "20000101", 
+            "", 
             0,
-            "STK",
-            0, # isOption
+            "",
             position, # position
             operation, # Operation
             side, # side
             price, # price
             size, # size
-            -1, # tickType
-            "", # tickString
-            0, # Implied Volatility
-            0, # delta
-            0, # predicted optPrice
-            0, # pvDividend
-            0, # gamma
-            0, # vega
-            0, # theta
-            0, # underlying STK Price
-            formatted,
-            py_time.perf_counter_ns()
+            human_readable_ts,
+            received_ts
         )
-        
+
         with self.tick_data_collection_lock: 
             
             self.tick_data_collection.append(data_now)
@@ -672,7 +665,7 @@ class TestApp(EClient, EWrapper):
 
     ## L1 Options Market Data
 
-    def req_L1_OPT_Market_Data(self, ticker: str, exp_pos: int, strike_pos: int, right: str): # -> None
+    def req_L1_OPT_Market_Data(self, ticker: str, exp_pos: int, strike_pos: int, right: str, secType: str): # -> None
         """
         Return Order: 
         1. 45 - LastTime 
@@ -683,105 +676,117 @@ class TestApp(EClient, EWrapper):
         with self.order_id_lock:
             order_id = self.order_id
             self.order_id += 1
-        
-        option_strike = self.options_meta_data[ticker]['strike'][strike_pos]
-        option_exp = self.options_meta_data[ticker]['exp'][exp_pos]
 
-        self.reqId_to_L1_Option_Contract[order_id] = {"ticker": ticker, "reqId": order_id, "exchange": "SMART", "exp": option_exp, "strike": option_strike, "right": right}
-        
-        opt_contract_SMART = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = right, exchange = "SMART")
-        
-        self.reqMktData(order_id, opt_contract_SMART, "", False, False, [])
-        print(f"Starting L1 OPT Market Stream: {self.reqId_to_L1_Option_Contract[order_id]}")
+        if (secType == "OPT"): 
+
+            option_strike = self.options_meta_data[ticker]['strike'][strike_pos]
+            option_exp = self.options_meta_data[ticker]['exp'][exp_pos]
+
+            self.reqId_to_L1_Option_Contract[order_id] = {"ticker": ticker, "reqId": order_id, "exchange": "SMART", "exp": option_exp, "strike": option_strike, "right": right, "secType": "OPT"}
+            
+            contract = self.create_opt_contract(symbol = ticker, strike = option_strike, exp = option_exp, right = right, exchange = "SMART")
+        else: 
+            self.reqId_to_L1_Option_Contract[order_id] = {"ticker": ticker, "reqId": order_id, "exchange": "SMART", "exp": "", "strike": 0, "right": "", "secType": "STK"}
+            contract = self.create_stock_contract(ticker, "SMART")
+
+        self.reqMktData(order_id, contract, "", False, False, [])
+        print(f"Starting L1 Market Stream: {self.reqId_to_L1_Option_Contract[order_id]}")
+    
 
     def tickOptionComputation(self, reqId, tickType, tickAttrib: int, impliedVol: float, delta: float, optPrice: float, pvDividend: float, gamma: float, vega: float, theta: float, undPrice: float):
         """
         Triggered by tickType: 10 - bid (OPT Greeks), 11 - (OPT Greeks), 12 - Last (OPT Greeks)
         """
-        reqId, tickType = int(reqId), int(tickType)
 
-        ts = py_time.time()
-        dt = datetime.fromtimestamp(ts)
-        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
+        temp = 1
         
-        data_now = (
-            reqId,
-            self.reqId_to_L1_Option_Contract[reqId]["ticker"],
-            self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
-            self.reqId_to_L1_Option_Contract[reqId]["exp"], 
-            self.reqId_to_L1_Option_Contract[reqId]["strike"],
-            self.reqId_to_L1_Option_Contract[reqId]["right"],
-            2, # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
-            1, # position
-            1, # Operation
-            1, # side
-            0, # price
-            0, # size
-            tickType, # tickType
-            "", # tickString
-            impliedVol, # Implied Volatility
-            delta, # delta
-            optPrice, # predicted optPrice
-            pvDividend, # pvDividend
-            gamma, # gamma
-            vega, # vega
-            theta, # theta
-            undPrice, # underlying STK Price
-            formatted,
-            py_time.perf_counter_ns()
-        )
+        # reqId, tickType = int(reqId), int(tickType)
 
-        with self.tick_data_collection_lock: 
+        # ts = py_time.time()
+        # dt = datetime.fromtimestamp(ts)
+        # formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
+        
+        # data_now = (
+        #     reqId,
+        #     self.reqId_to_L1_Option_Contract[reqId]["ticker"],
+        #     self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
+        #     self.reqId_to_L1_Option_Contract[reqId]["exp"], 
+        #     self.reqId_to_L1_Option_Contract[reqId]["strike"],
+        #     self.reqId_to_L1_Option_Contract[reqId]["right"],
+        #     2, # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
+        #     1, # position
+        #     1, # Operation
+        #     1, # side
+        #     0, # price
+        #     0, # size
+        #     tickType, # tickType
+        #     "", # tickString
+        #     impliedVol, # Implied Volatility
+        #     delta, # delta
+        #     optPrice, # predicted optPrice
+        #     pvDividend, # pvDividend
+        #     gamma, # gamma
+        #     vega, # vega
+        #     theta, # theta
+        #     undPrice, # underlying STK Price
+        #     formatted,
+        #     py_time.perf_counter_ns()
+        # )
+
+        # with self.tick_data_collection_lock: 
             
-            self.tick_data_collection.append(data_now)
+        #     self.tick_data_collection.append(data_now)
 
-            curr_unix_time = int(py_time.time())
-            if (curr_unix_time >  self.last_push_in_sec + 30): 
-                self.wake_db_worker.set()
-                self.last_push_in_sec = curr_unix_time
+        #     curr_unix_time = int(py_time.time())
+        #     if (curr_unix_time >  self.last_push_in_sec + 30): 
+        #         self.wake_db_worker.set()
+        #         self.last_push_in_sec = curr_unix_time
 
         # print("TickOptionComputation. TickerId:", reqId, "TickType:", tickType, "TickAttrib:", tickAttrib, "ImpliedVolatility:", impliedVol, "Delta:", delta, "OptionPrice:", optPrice, "pvDividend:", pvDividend, "Gamma: ", gamma, "Vega:", vega, "Theta:", theta, "UnderlyingPrice:", undPrice)
 
     def tickGeneric(self, reqId, tickType, value: float):
         temp = 1
-        print("TickGeneric. TickerId:", reqId, "TickType:", tickType, "Value:", value)
+        # print("TickGeneric. TickerId:", reqId, "TickType:", tickType, "Value:", value)
     
     def tickPrice(self, reqId, tickType, price: float, attrib):
         """
         Triggered by TickTypes: 1 - BidPrice, 2 - AskPrice, 4 - LastPrice, 
         """
 
-        reqId, tickType = int(reqId), int(tickType)
-
+        # Time Stamp Record Keeping
+        received_ts = py_time.time_ns()
         ts = py_time.time()
         dt = datetime.fromtimestamp(ts)
-        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
+        human_readable_ts = dt.strftime("%m/%d/%Y %H:%M:%S")
+
+        reqId, tickType = int(reqId), int(tickType)
+
+        position = 0
+        operation = 1
+        size = -1
+        side = 1 if (tickType == 1) else (0 if (tickType == 2) else (2 if (tickType == 4) else 10))
+
+        if (side == 10): 
+            return
+
+        if (self.reqId_to_L1_Option_Contract[reqId]["secType"] == "STK"  and side != 2): 
+            return
 
         data_now = (
+            self.reqId_to_L1_Option_Contract[reqId]["secType"],
             reqId,
             self.reqId_to_L1_Option_Contract[reqId]["ticker"],
             self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
             self.reqId_to_L1_Option_Contract[reqId]["exp"], 
             self.reqId_to_L1_Option_Contract[reqId]["strike"],
             self.reqId_to_L1_Option_Contract[reqId]["right"],
-            1, # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
-            1, # position
-            1, # Operation
-            1, # side
+            position, # position
+            operation, # Operation
+            side, # side
             price, # price
-            0, # size
-            tickType, # tickType
-            "", # tickString
-            0, # Implied Volatility
-            0, # delta
-            0, # predicted optPrice
-            0, # pvDividend
-            0, # gamma
-            0, # vega
-            0, # theta
-            0, # underlying STK Price
-            formatted,
-            py_time.perf_counter_ns()
+            size, # size
+            human_readable_ts,
+            received_ts
         )
 
         with self.tick_data_collection_lock: 
@@ -800,37 +805,40 @@ class TestApp(EClient, EWrapper):
         Triggered by TickTypes: 0 - BidExchange, 3 - AskExchange, 4 - LastTime, 6 - Low, 7 - High, 9 - Prev Day Close Price
         """
         
-        reqId, tickType = int(reqId), int(tickType)
-
+        # Time Stamp Record Keeping
+        received_ts = py_time.time_ns()
         ts = py_time.time()
         dt = datetime.fromtimestamp(ts)
-        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
+        human_readable_ts = dt.strftime("%m/%d/%Y %H:%M:%S")
 
+        reqId, tickType = int(reqId), int(tickType)
+
+        position = 0
+        operation = 1
+        price = -1
+        
+        side = 1 if (tickType == 0) else (0 if (tickType == 3) else (2 if (tickType == 4) else 10))
+        if (side == 10): 
+            return
+
+        if (self.reqId_to_L1_Option_Contract[reqId]["secType"] == "STK"  and side != 2): 
+            return
+        
         data_now = (
+            self.reqId_to_L1_Option_Contract[reqId]["secType"],
             reqId,
             self.reqId_to_L1_Option_Contract[reqId]["ticker"],
             self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
             self.reqId_to_L1_Option_Contract[reqId]["exp"], 
             self.reqId_to_L1_Option_Contract[reqId]["strike"],
             self.reqId_to_L1_Option_Contract[reqId]["right"],
-            1, # # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
-            1, # position
-            1, # Operation
-            1, # side
-            0, # price
+            position, # position
+            operation, # Operation
+            side, # side
+            price, # price
             size, # size
-            tickType, # tickType
-            "", # tickString
-            0, # Implied Volatility
-            0, # delta
-            0, # predicted optPrice
-            0, # pvDividend
-            0, # gamma
-            0, # vega
-            0, # theta
-            0, # underlying STK Price
-            formatted,
-            py_time.perf_counter_ns()
+            human_readable_ts,
+            received_ts
         )
 
         with self.tick_data_collection_lock: 
@@ -843,59 +851,59 @@ class TestApp(EClient, EWrapper):
                 self.last_push_in_sec = curr_unix_time
 
         # print("TickSize. TickerId:", reqId, "TickType:", tickType, "Size: ", size)
-
     
     def tickString(self, reqId, tickType, value: str):
         """
         Triggered by TickTypes: 32 - BidExchange, 33 - AskExchange, 4 - LastTime
         """
+        temp = 1
 
-        reqId, tickType = int(reqId), int(tickType)
+        # reqId, tickType = int(reqId), int(tickType)
 
-        ts = py_time.time()
-        dt = datetime.fromtimestamp(ts)
-        formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
+        # ts = py_time.time()
+        # dt = datetime.fromtimestamp(ts)
+        # formatted = dt.strftime("%m/%d/%Y %H:%M:%S")
 
-        data_now = (
-            reqId,
-            self.reqId_to_L1_Option_Contract[reqId]["ticker"],
-            self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
-            self.reqId_to_L1_Option_Contract[reqId]["exp"], 
-            self.reqId_to_L1_Option_Contract[reqId]["strike"],
-            self.reqId_to_L1_Option_Contract[reqId]["right"],
-            1, # # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
-            1, # position
-            1, # Operation
-            1, # side
-            0, # price
-            0, # size
-            tickType, # tickType
-            value, # tickString
-            0, # Implied Volatility
-            0, # delta
-            0, # predicted optPrice
-            0, # pvDividend
-            0, # gamma
-            0, # vega
-            0, # theta
-            0, # underlying STK Price
-            formatted,
-            py_time.perf_counter_ns()
-        )
+        # data_now = (
+        #     reqId,
+        #     self.reqId_to_L1_Option_Contract[reqId]["ticker"],
+        #     self.reqId_to_L1_Option_Contract[reqId]["exchange"], 
+        #     self.reqId_to_L1_Option_Contract[reqId]["exp"], 
+        #     self.reqId_to_L1_Option_Contract[reqId]["strike"],
+        #     self.reqId_to_L1_Option_Contract[reqId]["right"],
+        #     1, # # OptionType: 0 = STK, 1 = OPT, 2 = OPT Greeks
+        #     1, # position
+        #     1, # Operation
+        #     1, # side
+        #     0, # price
+        #     0, # size
+        #     tickType, # tickType
+        #     value, # tickString
+        #     0, # Implied Volatility
+        #     0, # delta
+        #     0, # predicted optPrice
+        #     0, # pvDividend
+        #     0, # gamma
+        #     0, # vega
+        #     0, # theta
+        #     0, # underlying STK Price
+        #     formatted,
+        #     py_time.perf_counter_ns()
+        # )
 
-        with self.tick_data_collection_lock: 
+        # with self.tick_data_collection_lock: 
             
-            self.tick_data_collection.append(data_now)
+        #     self.tick_data_collection.append(data_now)
 
-            curr_unix_time = int(py_time.time())
-            if (curr_unix_time >  self.last_push_in_sec + 30): 
-                self.wake_db_worker.set()
-                self.last_push_in_sec = curr_unix_time
+        #     curr_unix_time = int(py_time.time())
+        #     if (curr_unix_time >  self.last_push_in_sec + 30): 
+        #         self.wake_db_worker.set()
+        #         self.last_push_in_sec = curr_unix_time
 
         # print("TickString. TickerId:", reqId, "Type:", tickType, "Value:", value)
 
     def tickReqParams(self, tickerId:int, minTick:float, bboExchange:str, snapshotPermissions:int):
-        hi = 0
+        temp = 1
         
         # print("TickReqParams. TickerId:", tickerId, "MinTick:", minTick, "BboExchange:", bboExchange, "SnapshotPermissions:", snapshotPermissions)
 
@@ -1059,11 +1067,22 @@ def seconds_until_market_open():
     eastern = ZoneInfo("America/New_York")
     
     now = datetime.now(eastern)
-    market_close = datetime.combine(now.date(), time(9, 30), tzinfo=eastern)
+    market_open = datetime.combine(now.date(), time(9, 30), tzinfo=eastern)
+    market_close = datetime.combine(now.date(), time(16, 15), tzinfo=eastern)
+
     
-    seconds = (market_close - now).total_seconds()
-    
-    return max(0, int(seconds))
+    wait_open = (market_open - now).total_seconds()
+    wait_close = (market_close - now).total_seconds()
+
+    if (wait_open < 0 and wait_close > 0): # Open Market
+        return 0
+    elif (wait_open > 0): # Pre-Market
+        return wait_open
+    else: # Post-Market
+        tomorrow = now.date() + timedelta(days=1)
+        next_open = datetime.combine(tomorrow, time(9, 30), tzinfo=eastern)
+        (next_open - now).total_seconds()
+
 
 # ================= DB Thread =================
 
@@ -1080,6 +1099,15 @@ def db_worker():
         
         
         if (len(retreived_data) > 0):
+
+            STK_c = 0
+            OPT_c = 0
+
+            for i in retreived_data:
+                if (i[0] == "STK"): 
+                    STK_c += 1
+                elif (i[0] == "OPT"): 
+                    OPT_c += 1
 
             ts = py_time.time()
             dt = datetime.fromtimestamp(ts)
@@ -1141,9 +1169,9 @@ if __name__ == "__main__":
         else:
             app.save_options()
         break
-
-        # Sleep Till Market Open
-    sleep_till_open = seconds_until_market_open()
+    
+    # Sleep Till Market Open
+    sleep_till_open = seconds_until_market_open() - 10 # Buffer to start streams prior to market open
     if (sleep_till_open == 0):
         print("MARKET IS OPEN !!!")
     else: 
@@ -1152,11 +1180,12 @@ if __name__ == "__main__":
 
     for ticker in tickers:
         app.req_opt_L2(ticker)
+        py_time.sleep(0.1)
+        app.req_L1_OPT_Market_Data(ticker, 0, 0, "", secType = "STK")
         for i in range(2): 
             for j in range(2): 
                 for c in ["C", "P"]:
-
-                    app.req_L1_OPT_Market_Data(ticker, i, j, c)
+                    app.req_L1_OPT_Market_Data(ticker, i, j, c, secType = "OPT")
                     py_time.sleep(0.1)
 
         # 2 strikes, 2 exps, 2 rights = 8 Streams / ticker

@@ -20,64 +20,47 @@ createdb hft_db # to Create a db
 
 DB_CONFIG = "dbname=hft_db user=arcwilbo"
 
+## Revised
+
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS option_orders (
     id BIGSERIAL PRIMARY KEY,
+    secType TEXT NOT NULL,
     reqId INTEGER NOT NULL,
     ticker TEXT NOT NULL,
     exchange TEXT NOT NULL,
-    option_exp DATE NULL,
-    strike DOUBLE PRECISION NULL,
+    option_exp DATE,
+    strike DOUBLE PRECISION,
     option_right TEXT,
-    isOption INTEGER NOT NULL,
     position INTEGER NOT NULL,
     operation INTEGER NOT NULL,
     side INTEGER NOT NULL,
-    price DOUBLE PRECISION NOT NULL,
-    size INTEGER NOT NULL,
-    tickType INTEGER NOT NULL,
-    tickString TEXT NOT NULL,
-    impliedVol DOUBLE PRECISION,
-    delta DOUBLE PRECISION,
-    optPrice DOUBLE PRECISION,
-    pvDividend DOUBLE PRECISION,
-    gamma DOUBLE PRECISION,
-    vega DOUBLE PRECISION,
-    theta DOUBLE PRECISION,
-    undPrice DOUBLE PRECISION,
+    price DOUBLE PRECISION,
+    size INTEGER,
     time TEXT NOT NULL,
     event_timestamp BIGINT NOT NULL
 );
 """
+##! Revised
 
 INSERT_SQL = """
 INSERT INTO option_orders (
+    secType,
     reqId,
     ticker,
     exchange,
     option_exp,
     strike,
     option_right,
-    isOption,
     position,
     operation,
     side,
     price,
-    size, 
-    tickType,
-    tickString,
-    impliedVol, 
-    delta, 
-    optPrice, 
-    pvDividend, 
-    gamma, 
-    vega, 
-    theta, 
-    undPrice, 
+    size,
     time,
     event_timestamp
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 QUERY = """
@@ -101,7 +84,7 @@ SELECT
     pg_size_pretty(pg_total_relation_size('option_orders')) AS total_size;
 """
 
-da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", -1, -1, -1, -1, -1, -1, -1, -1,"time", time.perf_counter_ns())] * 1
+INITIAL_ROW = [("FIRST", -1,"ARC", "ARC", "20000101", -1, "ARC", -1, -1, -1, -1, -1,"March 23, ... etc", time.time_ns())]
 
 def table_stats():
     
@@ -157,7 +140,7 @@ def pull():
 
 
 if __name__ == "__main__":
-    # add(da)
-    # pull()
+    add(INITIAL_ROW)
+    pull()
 
-    table_stats()
+    # table_stats()
