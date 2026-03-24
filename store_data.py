@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS option_orders (
     reqId INTEGER NOT NULL,
     ticker TEXT NOT NULL,
     exchange TEXT NOT NULL,
-    option_exp DATE,
+    option_exp TEXT,
     strike DOUBLE PRECISION,
     option_right TEXT,
     position INTEGER NOT NULL,
@@ -66,7 +66,7 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 QUERY = """
 SELECT *
 FROM option_orders
-ORDER BY event_timestamp DESC;
+ORDER BY event_timestamp ASC;
 """
 
 TABLE_SHAPE_SQL = """

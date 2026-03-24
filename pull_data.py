@@ -802,7 +802,7 @@ class TestApp(EClient, EWrapper):
     
     def tickSize(self, reqId, tickType, size):
         """
-        Triggered by TickTypes: 0 - BidExchange, 3 - AskExchange, 4 - LastTime, 6 - Low, 7 - High, 9 - Prev Day Close Price
+        Triggered by TickTypes: 0 - BidExchange, 3 - AskExchange, 5 - LastTime, 6 - Low, 7 - High, 9 - Prev Day Close Price
         """
         
         # Time Stamp Record Keeping
@@ -817,7 +817,7 @@ class TestApp(EClient, EWrapper):
         operation = 1
         price = -1
         
-        side = 1 if (tickType == 0) else (0 if (tickType == 3) else (2 if (tickType == 4) else 10))
+        side = 1 if (tickType == 0) else (0 if (tickType == 3) else (2 if (tickType == 5) else 10))
         if (side == 10): 
             return
 
@@ -1089,6 +1089,9 @@ def seconds_until_market_open():
 def db_worker():
 
     count = 0
+    STK_c = 0
+    OPT_c = 0
+
     while not stop_event.is_set():
         app.wake_db_worker.clear()
         app.wake_db_worker.wait()
@@ -1099,9 +1102,6 @@ def db_worker():
         
         
         if (len(retreived_data) > 0):
-
-            STK_c = 0
-            OPT_c = 0
 
             for i in retreived_data:
                 if (i[0] == "STK"): 
@@ -1115,6 +1115,8 @@ def db_worker():
             
             count += len(retreived_data)
             print(f"Cols in PSQL: {count} @ {formatted}")
+            print(f"STK Count: {STK_c}")
+            print(f"OPT Count: {OPT_c}")
             add(retreived_data)
     
     print("DB WOrker Exited")
@@ -1143,8 +1145,6 @@ def setup_app_and_get_order_id(app, start_trade = False):
 
 if __name__ == "__main__":
 
-    da = [(-1,"Starter", "Starter", "20000101", -1, "C", -1, -1, -1, -1, -1, -1, -2, "Starter", -1, -1, -1, -1, -1, -1, -1, -1,"time", py_time.perf_counter_ns())] * 1
-
     app = TestApp()
 
     ib_thread = setup_app_and_get_order_id(app, start_trade = True)
@@ -1171,7 +1171,9 @@ if __name__ == "__main__":
         break
     
     # Sleep Till Market Open
-    sleep_till_open = seconds_until_market_open() - 10 # Buffer to start streams prior to market open
+    sleep_till_open = seconds_until_market_open()  # Buffer to start streams prior to market open
+    if (sleep_till_open != 0): 
+        sleep_till_open = max(0, sleep_till_open -10)
     if (sleep_till_open == 0):
         print("MARKET IS OPEN !!!")
     else: 
@@ -1205,10 +1207,3 @@ if __name__ == "__main__":
 
     app.disconnect()    
     ib_thread.join()
-    
-    
-
-
-  
-    
-    

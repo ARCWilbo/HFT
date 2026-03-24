@@ -5,15 +5,18 @@ from datetime import datetime
 import pandas as pd
 import time
 import numpy as np
+import matplotlib.pyplot as plt
 
 DB_CONFIG = "dbname=hft_db user=arcwilbo"
 
 SUB_QUERY = """
     SELECT *
     FROM option_orders
-    ORDER BY event_timestamp DESC
-    LIMIT 100000;
+    ORDER BY event_timestamp ASC
+    LIMIT 1000000;
     """
+
+
 
 def pull_subset_pd(): # -> pd.DataFrame
     """
@@ -32,7 +35,76 @@ def pull_subset_pd(): # -> pd.DataFrame
 
     return df
 
+def df_Trades(secType: str, ticker: str, df: pd.DataFrame, option_strike: int = None, option_exp: str = "", option_right: str = ""): # -> tuple[pd.DataFrame, pd.DataFrame]
+    """
+    Input: 
+        -   secType: STK or OPT
+        -   ticker: SPY, QQQ, DIA
+        -   df: full df
+    
+    Output: 
+        -   df of prices 
+        -   df of sizes
 
+    Notes: 
+        -   Price 
+            i) update first
+            ii) No two consecutive entries
+        -   Size 
+            i) Update second 
+            ii) Contains many duplicates but also some different sizes between two price updates
+    """
+
+    if (secType == "STK"):
+        df = df[(df['ticker'] == ticker) & (df['side'] == 2) & (df['sectype'] == secType)]
+    elif (secType == "OPT"):
+        df = df[(df['ticker'] == ticker) & (df['side'] == 2) & (df['sectype'] == secType) & (df['strike'] == option_strike) & (df['option_exp'] == option_exp) & (df['option_right'] == option_right)]
+    else: 
+        raise ValueError("Did not select STK or OPT as secType")
+
+    # 2D List of Data to create pd.DataFrame
+    data = [] 
+
+    price = -1
+    size_sum = 0
+
+    vals = []
+    for idx, row in df.iterrows(): 
+        # sum up the size and once the new price is pushed, flush and update
+        
+        if (price == -1 and row['price'] != -1): # First Price
+
+            # Initialize Values
+            price = row['price']
+            vals = [row['sectype'], row['ticker'], 0, 0, row['time'], row['event_timestamp'], row['option_exp'], row['strike'], row['option_right']]
+        
+        elif (price != -1 and row['size'] != -1):
+            size_sum += row['size']
+
+        elif (price != -1 and row['price'] != -1): # new price
+            
+            # add the missing values
+            vals[2] = price 
+            vals[3] = size_sum 
+            data.append(vals)
+
+            # Reset values
+            price = row['price']
+            size_sum = 0     
+            vals = [row['sectype'], row['ticker'], 0, 0, row['time'], row['event_timestamp'], row['option_exp'], row['strike'], row['option_right']]   
+
+    df_t = pd.DataFrame(data, columns=['secType', 'ticker', 'price', 'size', 'time', 'event_timestamp', 'option_exp', 'strike', 'option_right'])
+    return df_t
+
+
+def STK_Volume_last_min(ts: int, df: pd.DataFrame): # -> int
+    """
+    Input: 
+        -   ts: Time stamp you want summation of previous STK volume from last minute
+        -   df: DataFrame of already filtered STK size and 
+    """
+
+    return df[(df['event_timestamp'] >= ts - 60 * 1_000_000_000) & (df['event_timestamp'] <= ts)]['size'].sum()
 
 
 def create_OMM_pd(df: pd.DataFrame): # -> tuple[pd.DataFrame, pd.DataFrame]
@@ -43,10 +115,10 @@ def create_OMM_pd(df: pd.DataFrame): # -> tuple[pd.DataFrame, pd.DataFrame]
 
     Columns
         -   id: enumerate index number
-        -   secType 
+        -   sectype 
             i) "STK" 
             ii) "OPT"
-        -   reqId
+        -   reqid
         -   ticker
         -   exchange
             i)  OPT: "ARCA"
@@ -81,19 +153,14 @@ def create_OMM_pd(df: pd.DataFrame): # -> tuple[pd.DataFrame, pd.DataFrame]
         -   OPT: std ask price in last min -> Proxy of Implied Volatility
         -   OPT: Volume of last min
 
-        -   Type of OPT (American / European)
         -   Strike Price
         -   Time to exp in minutes
     """
+    Data = pd.DataFrame(columns = ["STK_mid_price", "STK_std_price", "STK_volume", "OPT_right", "OPT_std_price", "OPT_volume", "Strike_price", "time_to_exp"])
 
-    # df_STK = df[df['isoption']==0]
-    print(df.info())
+    # for idx, row in df.iterrows(): 
+    #     row[]
 
-    # print(df.info())
-
-    # print(df.head())
-
-    # df['STK_mid_price'] = df['']
 
     return df, df
     
@@ -104,15 +171,36 @@ if __name__ == "__main__":
     # There are 1+ dummy lines
 
     df = pull_subset_pd()
-    X, y = create_OMM_pd(df)
 
-    unix = time.time()
-    nano_unix = time.time_ns()
+    print(df.info())
+    
+    SPY_OPT_Trades = df_Trades(secType = "OPT", ticker = "SPY", df = df, option_strike = 653.0 , option_exp = "20260324", option_right = "C" )
+    SPY_STK_Trades = df_Trades(secType = "STK", ticker = "SPY", df = df)
+    
+    print(SPY_STK_Trades.describe())
 
-    print(f"UNIX: {unix}")
-    print(f"NANO UNIX: {nano_unix}")
+    # Graphing
+    # plt.figure(figsize=(16,5))
+    plt.plot(SPY_STK_Trades['price'])
+    # plt.show()
+    
+    
+    # SPY_OPT_Trade_Prices, SPY_OPT_Trade_Sizes = Trades("OPT", "SPY", df)
 
-    print(f"difference: {nano_unix - unix * 1_000_000_000}")
+    # print(SPY_STK_Trade_Prices.describe())
+
+    # print("\n--------------------------------\n")
+
+    # print(SPY_STK_Trade_Sizes.describe())
+    # X, y = create_OMM_pd(df)
+
+    # unix = time.time()
+    # nano_unix = time.time_ns()
+
+    # print(f"UNIX: {unix}")
+    # print(f"NANO UNIX: {nano_unix}")
+
+    # print(f"difference: {nano_unix - unix * 1_000_000_000}")
 
     """"
     IDEAS 
