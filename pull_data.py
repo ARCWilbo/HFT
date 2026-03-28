@@ -821,7 +821,7 @@ class TestApp(EClient, EWrapper):
         if (side == 10): 
             return
 
-        if (self.reqId_to_L1_Option_Contract[reqId]["secType"] == "STK"  and side != 2): 
+        if (self.reqId_to_L1_Option_Contract[reqId]["secType"] == "STK" and side != 2): 
             return
         
         data_now = (

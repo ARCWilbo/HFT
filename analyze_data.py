@@ -6,206 +6,563 @@ import pandas as pd
 import time
 import numpy as np
 import matplotlib.pyplot as plt
+from typing import Dict, List
+
+"""
+ts = ns unix (UTC)
+"""
 
 DB_CONFIG = "dbname=hft_db user=arcwilbo"
 
 SUB_QUERY = """
     SELECT *
     FROM option_orders
-    ORDER BY event_timestamp ASC
-    LIMIT 1000000;
+    ORDER BY event_timestamp ASC;
     """
+# LIMIT 100000;
 
-
-
-def pull_subset_pd(): # -> pd.DataFrame
-    """
-    Pulls Data from SQL 
+class Security:
     
-    Output: DF
-    """
+    def __init__(self, ticker: str, exp: str = None, strike: float = None, right: str = None): 
+        """
+        OPT_Security Attributes
+        """
 
-    # Connects to DB
-    conn = psycopg.connect(DB_CONFIG)
-    df = pd.read_sql(SUB_QUERY, conn)
-    conn.close()
-
+        self.ticker = ticker
+        self.exp = exp
+        self.strike = strike
+        self.right = right
     
-    print(f"\nDF Shape: {df.shape}\n")
+    def __str__(self): 
+        return f"({self.ticker}: {self.right} at {self.strike} on {self.exp})"
 
-    return df
+class Data_Analysis: 
 
-def df_Trades(secType: str, ticker: str, df: pd.DataFrame, option_strike: int = None, option_exp: str = "", option_right: str = ""): # -> tuple[pd.DataFrame, pd.DataFrame]
-    """
-    Input: 
-        -   secType: STK or OPT
-        -   ticker: SPY, QQQ, DIA
-        -   df: full df
+    def __init__(self): 
+        """
+        Data_Analysis attribute
+        """
+        self.main_df: pd.DataFrame = self.pull_subset_and_sort_pd()
+        self.OPT_Security_list: List[Security] = self.find_all_unique_Contracts(df = self.main_df, secType="OPT")
+        self.STK_Security_list: List[Security] = self.find_all_unique_Contracts(df = self.main_df, secType="STK")
     
-    Output: 
-        -   df of prices 
-        -   df of sizes
-
-    Notes: 
-        -   Price 
-            i) update first
-            ii) No two consecutive entries
-        -   Size 
-            i) Update second 
-            ii) Contains many duplicates but also some different sizes between two price updates
-    """
-
-    if (secType == "STK"):
-        df = df[(df['ticker'] == ticker) & (df['side'] == 2) & (df['sectype'] == secType)]
-    elif (secType == "OPT"):
-        df = df[(df['ticker'] == ticker) & (df['side'] == 2) & (df['sectype'] == secType) & (df['strike'] == option_strike) & (df['option_exp'] == option_exp) & (df['option_right'] == option_right)]
-    else: 
-        raise ValueError("Did not select STK or OPT as secType")
-
-    # 2D List of Data to create pd.DataFrame
-    data = [] 
-
-    price = -1
-    size_sum = 0
-
-    vals = []
-    for idx, row in df.iterrows(): 
-        # sum up the size and once the new price is pushed, flush and update
+    def pull_subset_and_sort_pd(self): # -> pd.DataFrame
+        """
+        Explanantion:
+            -   Pulls Data from SQL 
+            -   Makes ts the ns datetime index
+            -   sorts based of index
         
-        if (price == -1 and row['price'] != -1): # First Price
+        Output: DF
+        """
 
-            # Initialize Values
-            price = row['price']
-            vals = [row['sectype'], row['ticker'], 0, 0, row['time'], row['event_timestamp'], row['option_exp'], row['strike'], row['option_right']]
-        
-        elif (price != -1 and row['size'] != -1):
-            size_sum += row['size']
+        # Connects to DB
+        conn = psycopg.connect(DB_CONFIG)
+        df = pd.read_sql(SUB_QUERY, conn)
+        conn.close()
 
-        elif (price != -1 and row['price'] != -1): # new price
+        # No data
+        if (df.empty): 
+            raise ValueError("SQL Query returned nothing")
+
+        # Sort and set index as ts (dtype = pd.datetime)
+        df['event_timestamp'] = pd.to_datetime(df['event_timestamp'], unit = 'ns')
+        df.set_index('event_timestamp', inplace=True)
+        df.sort_index(inplace=True)
+
+        print(f"\nDF Shape: {df.shape}\n")
+        # print(df.columns)
+
+        return df
+
+    def find_all_unique_Contracts(self, df: pd.DataFrame, secType: str): # -> List[Security]
+            """
+            Input: 
+                -   Master df
+                -   secType: "STK" or "OPT
+            Output: 
+                -   List[Security]: All unique secType Contracts in Master df
+            """
+
+            if (secType != "STK" and secType != "OPT"):
+                raise ValueError("Paramter secType must be STK or OPT")
             
-            # add the missing values
-            vals[2] = price 
-            vals[3] = size_sum 
-            data.append(vals)
+            temp_master_list: List[Security] = [] 
+            
+            # Filter to secType only
+            sec_df = df[self.main_df["sectype"] == secType]
 
-            # Reset values
-            price = row['price']
-            size_sum = 0     
-            vals = [row['sectype'], row['ticker'], 0, 0, row['time'], row['event_timestamp'], row['option_exp'], row['strike'], row['option_right']]   
+            # STK Unique
+            if (secType == "STK"): 
+                
+                STK_unique_df = sec_df[["ticker"]].drop_duplicates()
+                
+                for _, row in STK_unique_df.iterrows(): 
+                            
+                    temp: Security = Security(ticker = row['ticker'])
+                    
+                    temp_master_list.append(temp)
+            
+            # OPT Unique
+            else: 
+                
+                OPT_unique_df = sec_df[["ticker", "option_exp", "strike", "option_right"]].drop_duplicates()
 
-    df_t = pd.DataFrame(data, columns=['secType', 'ticker', 'price', 'size', 'time', 'event_timestamp', 'option_exp', 'strike', 'option_right'])
-    return df_t
+                for _, row in OPT_unique_df.iterrows(): 
+                                
+                    temp: Security = Security(ticker = row['ticker'], exp = row['option_exp'], strike = row['strike'], right = row['option_right'])
+                    
+                    temp_master_list.append(temp)
+            
+            return temp_master_list
 
+    def df_STK_order_book(self, master_df: pd.DataFrame, sec: Security): # -> pd.DataFrame
+        """
+        Input: 
+            -   master_df: SQL data  
+            -   sec: Security
+        Ouput
+            -   all values for all bid-ask levels at a specific ts
 
-def STK_Volume_last_min(ts: int, df: pd.DataFrame): # -> int
-    """
-    Input: 
-        -   ts: Time stamp you want summation of previous STK volume from last minute
-        -   df: DataFrame of already filtered STK size and 
-    """
+        Note
+            -   Operation = 0 for first 20 then 1
+            -   How to Handle (Best Bid > Best Ask)
+        """
+        # Extract Security
+        ticker = sec.ticker
+        
+        # Filter to only L2 STK Data
+        df = master_df[(master_df['sectype'] == "STK") & (master_df['ticker'] == ticker) & (master_df['side'] != 2)]
 
-    return df[(df['event_timestamp'] >= ts - 60 * 1_000_000_000) & (df['event_timestamp'] <= ts)]['size'].sum()
+        data = []
 
+        template_val = {} 
 
-def create_OMM_pd(df: pd.DataFrame): # -> tuple[pd.DataFrame, pd.DataFrame]
-    """
-    Input: Dirty DF from data accumulation 
+        prev_val = {}
 
-    Note: tickSize is called independently and after each tickPrice
+        add_temp: bool = True
 
-    Columns
-        -   id: enumerate index number
-        -   sectype 
-            i) "STK" 
-            ii) "OPT"
-        -   reqid
-        -   ticker
-        -   exchange
-            i)  OPT: "ARCA"
-            ii) STK: "SMART"
-        -   option_exp: Experation Date of Option Contract
-        -   strike
-        -   option_right
-            i)  "C": Call 
-            ii) "P": Put
-        -   position: level on order book 0-9 (where 0 is the best bid/ask level)
-        -   operation
-            i)   0: Intial values
-            ii)  1: Update values
-            iii) 2: Delete values
-        -   side
-            i)   0: Ask 
-            ii)  1: Bid
-            iii) 2: Last
-        -   price
-        -   size
-        -   time: Human Readable time
-        -   event_timestamp: Nanosecond precision of unix for received ts of data
+        for idx, row in df.iterrows():
 
-    Output: Clean X, y for ML or DL
+            # Creating Book 
+            if (row['operation'] == 0): 
+                
+                template_val['time'] = row['time']
+                template_val['event_timestamp'] = idx
+                template_val['ticker'] = row['ticker']
+                template_val['sectype'] = row['sectype']
 
-    Feautures: 
-        -   STK: Current mid price
-        -   STK: std of price in last min / hr -> proxy of Historical Volatility
-        -   STK: Volume of last minute
+                bid_or_ask = "ask" if row['side'] == 0 else "bid"
+                template_val[f"{bid_or_ask}_size_{row['position']}"] = row['size']
+                template_val[f"{bid_or_ask}_price_{row['position']}"] = row['price']
 
-        -   OPT: Right (Call / put)
-        -   OPT: std ask price in last min -> Proxy of Implied Volatility
-        -   OPT: Volume of last min
+            # Updating Book
+            elif (row['operation'] == 1):
+                
+                # Add the finished template_val to data
+                if (add_temp): 
+                    data.append(template_val)
+                    add_temp = False
+                    prev_val = template_val.copy()
 
-        -   Strike Price
-        -   Time to exp in minutes
-    """
-    Data = pd.DataFrame(columns = ["STK_mid_price", "STK_std_price", "STK_volume", "OPT_right", "OPT_std_price", "OPT_volume", "Strike_price", "time_to_exp"])
+                # Copy most reent values and update: time, ts, and 1 bid-ask levels
 
-    # for idx, row in df.iterrows(): 
-    #     row[]
+                bid_or_ask = "ask" if row['side'] == 0 else "bid"
+                prev_val[f"{bid_or_ask}_size_{row['position']}"] = row['size']
+                prev_val[f"{bid_or_ask}_price_{row['position']}"] = row['price']
 
+                prev_val['time'] = row['time']
+                prev_val['event_timestamp'] = idx
 
-    return df, df
+                # Prints if BID >= ASK
+                if (data[-1]["bid_price_0"] >= data[-1]["ask_price_0"]):
+                    print(f"Bid: {data[-1]['bid_price_0']}, Ask: {data[-1]['ask_price_0']} @ {data[-1]['time']}")
+
+                # Only Push the row to Data if BID < ASK
+                if (prev_val["bid_price_0"] < prev_val["ask_price_0"]):
+                    data.append(prev_val.copy())
+
+        # No data
+        if (not data): 
+            return pd.Dataframe()
+        
+        # Yes data
+        STK_df = pd.DataFrame(data)
+        STK_df["event_timestamp"] = pd.to_datetime(STK_df["event_timestamp"], unit = "ns")
+        STK_df.set_index("event_timestamp", inplace = True)
+        STK_df.sort_index(inplace = True)
+
+        return STK_df
+
+    def df_OPT_order_book(self, master_df: pd.DataFrame, OPT_sec: Security): # -> pd.DataFrame
+        """
+        Input: 
+            -   master_df
+            -   ticker
+            -   exp: OPT Expiration date
+            -   strike 
+            -   right: "C" or "P"
+        Output: 
+            -   pd.DataFrame: Clean df order book per ts
+        """
+
+        # Local Copies of OPT_sec: Security Attributes
+        ticker = OPT_sec.ticker 
+        exp = OPT_sec.exp
+        strike = OPT_sec.strike
+        right = OPT_sec.right
+
+        # Filter to only L1 Specific OPT Data
+        df = master_df[(master_df['sectype'] == "OPT") & (master_df['ticker'] == ticker) & (master_df['side'] != 2) & (master_df['option_exp'] == exp) & (master_df['strike'] == strike) & (master_df['option_right'] == right)]
+
+        data = []
+
+        template_val = {"sectype": "OPT", "ticker": ticker, "option_exp": exp, "strike": strike, "option_right": right, "bid_price": None, "bid_size": 0, "ask_price": None, "ask_size": 0, "time": None, "event_timestamp": None} 
+
+        for idx, row in df.iterrows(): 
+
+            # Update Time based cols
+            template_val["event_timestamp"] = idx
+            template_val["time"] = row["time"]
+
+            # Update Ask
+            if (row["side"] == 0): 
+                
+                # Update Size
+                if (row["size"] != -1):
+                    
+                    template_val["ask_size"] = row["size"]
+
+                # Update Price & set Size to 0
+                else: 
+
+                    template_val["ask_price"] = row["price"]
+                    template_val["ask_size"] = 0
+
+            # Update Bid
+            elif (row["side"] == 1): 
+
+                # Update Size
+                if (row["size"] != -1):
+                    
+                    template_val["bid_size"] = row["size"]
+
+                # Update Price & set Size to 0
+                else: 
+
+                    template_val["bid_price"] = row["price"]
+                    template_val["bid_size"] = 0
+            
+            # Add to data
+            if ((template_val["bid_size"] != 0) and (template_val["ask_size"] != 0) and (template_val["bid_price"]) and (template_val["ask_price"]) and (template_val["bid_price"] < template_val["ask_price"])):
+                data.append(template_val.copy())
+        
+        # No data
+        if (not data): 
+            return pd.DataFrame()
+        
+        # Yes data
+        OPT_df = pd.DataFrame(data, columns = ["OPT", "ticker", "option_exp", "strike", "option_right", "bid_price", "bid_size", "ask_price", "ask_size","time", "event_timestamp"])
+        
+        # Datetime + index
+        OPT_df['event_timestamp'] = pd.to_datetime(OPT_df['event_timestamp'], unit ='ns')
+        OPT_df.set_index('event_timestamp', inplace = True)
+        OPT_df.sort_index(inplace = True)
+        # print("OPT", OPT_df.shape)
+        
+        return OPT_df
     
+    def df_Trades(self, master_df: pd.DataFrame, sec: Security): # -> pd.DataFrame
+        """
+        Input: 
+            -   master_df: Uncleaned SQL pulled data 
+            -   sec: Security
+        
+        Output: 
+            -   df of Trades
 
+        Notes: 
+            -   Price 
+                i) update first
+                ii) No two consecutive entries
+            -   Size 
+                i) Update second 
+                ii) Contains many duplicates but also some different sizes between two price updates
+        """
+        
+        # Unpacking sec
+        secType = "STK" if (sec.strike is None) else "OPT"
+        ticker = sec.ticker
+        option_strike = sec.strike
+        option_exp = sec.exp
+        option_right = sec.right
+
+        # Filter Master df to sec
+        df = master_df[(master_df['ticker'] == ticker) & (master_df['side'] == 2) & (master_df['sectype'] == secType)]
+        
+        if (secType == "OPT"):
+            
+            df = df[(df['strike'] == option_strike) & (df['option_exp'] == option_exp) & (df['option_right'] == option_right)]
+
+        # 2D List of Data to create pd.DataFrame
+        data = [] 
+
+        template_val = {'secType': secType, 'ticker': ticker, 'price': None, 'size': 0, 'time': None, 'event_timestamp': None, 'option_exp': option_exp, 'strike': option_strike, 'option_right': option_right}
+        
+        # sum up the size and once there is a new price, flush and update
+        for idx, row in df.iterrows(): 
+
+            # Update Time cols
+            template_val['time'] = row['time']
+            template_val['event_timestamp'] = idx
+            
+            # New Price
+            if (row['price'] != -1):
+
+                # If there is size
+                if (template_val['size'] != 0): 
+                    
+                    data.append(template_val.copy())
+                
+                # Update price and reset size
+                template_val['price'] = row['price']
+                template_val['size'] = 0
+
+            # New Size
+            elif (row['size'] != -1):
+
+                template_val['size'] += row['size']
+        
+        # Flush last trade
+        if (template_val['size'] != 0): 
+            data.append(template_val.copy())
+        
+        # No data
+        if (not data): 
+            return pd.DataFrame()
+        
+        # Yes data
+        df_t = pd.DataFrame(data, columns=['secType', 'ticker', 'price', 'size', 'time', 'event_timestamp', 'option_exp', 'strike', 'option_right'])
+        
+        # Convert to datetime ts and set index
+        df_t['event_timestamp'] = pd.to_datetime(df_t['event_timestamp'], unit = 'ns')
+        df_t.set_index('event_timestamp', inplace = True)
+
+        return df_t
+
+    def STK_Volume_last_min(self, ts: int, df: pd.DataFrame): # -> int
+        """
+        Input: 
+            -   ts: Time stamp you want summation of previous STK volume from last minute
+            -   df: DataFrame of already filtered STK size and 
+        Ouput 
+            -   None if empty else sum
+        """
+        # Filter for last minute
+        df = df[(df.index >= ts - 60 * 1_000_000_000) & (df.index <= ts)]
+        
+        if (df.empty): 
+            return None
+        
+        return df['size'].sum()
+
+    def create_OMM_pd(self, ticker: str, df: pd.DataFrame): # -> tuple[pd.DataFrame, pd.DataFrame]
+        """
+        Input: Dirty DF from data accumulation 
+
+        Note: tickSize is called independently and after each tickPrice
+
+        Columns
+            -   id: enumerate index number
+            -   sectype 
+                i) "STK" 
+                ii) "OPT"
+            -   reqid
+            -   ticker
+            -   exchange
+                i)  OPT: "ARCA"
+                ii) STK: "SMART"
+            -   option_exp: Experation Date of Option Contract
+            -   strike
+            -   option_right
+                i)  "C": Call 
+                ii) "P": Put
+            -   position: level on order book 0-9 (where 0 is the best bid/ask level)
+            -   operation
+                i)   0: Intial values
+                ii)  1: Update values
+                iii) 2: Delete values
+            -   side
+                i)   0: Ask 
+                ii)  1: Bid
+                iii) 2: Last
+            -   price
+            -   size
+            -   time: Human Readable time
+            -   event_timestamp: Nanosecond precision of unix for received ts of data
+
+        Output: Clean X, y for ML or DL
+
+        Feautures: 
+            -   STK: Current mid price
+            -   STK: std of price in last min / hr -> proxy of Historical Volatility
+            -   STK: Volume of last minute
+
+            -   OPT: Right (Call / put)
+            -   OPT: std ask price in last min -> Proxy of Implied Volatility
+            -   OPT: Volume of last min
+
+            -   Strike Price
+            -   Time to exp in minutes
+
+        Conceptually: 
+            -   (Target) y: The theo price for the next ts of that OPT secruity — exp, strike, right —
+        """
+
+        STK_book = df_STK_order_book(ticker = ticker, df = df)
+
+        # For each OPT security in df
+        #   Create teh book for it 
+        #   Create target y
+        # Merge all books
+        # Sort by ts
+        # Add STK features
+
+
+
+
+
+
+        df['STK_mid_price'] = (df['bid_price_0'] + df['ask_price_0']) / 2
+        df['STK_Volume'] = df['size'].rolling('60s').sum()
+        df['STK_std_mid_price'] = df['STK_mid_price'].rolling('60s').std()
+
+        # df['OPT_']
+
+        return df, df
+    
+    def create_OMM_df(self, master_df: pd.DataFrame, OPT_sec_list: List[Security], STK_sec: Security): # -> tuple[pd.DataFrame, pd.DataFrame]
+        """
+        Input: 
+            -   master_df: SQL data
+            -   OPT_sec_list: List[Security]
+            -   STK_sec: Security, the solo STK sec
+        Output: 
+            -   X: 
+            -   y: 
+        
+        Note: 
+            -   Ouput is not sorted
+            -   min_ts filter is NOT applied yet
+        """
+        
+        # Empty sec list
+        if (len(OPT_sec_list) == 0): 
+            raise ValueError("There are no Securities in OPT_sec_list")
+
+        dfs = []
+        
+        # Constant STK Book and Trade df
+        STK_book_df = self.df_STK_order_book(master_df=master_df, sec=STK_sec)
+        if (STK_book_df.empty): 
+            raise ValueError(f"No STK Book Data for {STK_sec}")
+        
+        STK_trades_df = self.df_Trades(master_df= master_df, sec= STK_sec)
+        if (STK_trades_df.empty): 
+            raise ValueError(f"No STK Trade Data for {STK_sec}")
+
+        # OPT list for only STK ticker 
+        ticker_OPT_sec_list = [sec for sec in OPT_sec_list if sec.ticker == STK_sec.ticker]
+        # Loop each sec in List[sec]
+        for OPT_sec in ticker_OPT_sec_list: 
+
+            OPT_book_df = self.df_OPT_order_book(master_df= master_df, OPT_sec= OPT_sec)
+            if (OPT_book_df.empty): 
+                raise ValueError(f"No OPT Book Data for {OPT_sec}")
+
+            OPT_trades_df = self.df_Trades(master_df= master_df, sec= OPT_sec)
+            if (OPT_trades_df.empty): 
+                raise ValueError(f"No OPT Trade Data for {OPT_sec}")
+            
+            # Filter final ts > min_ts
+            min_ts: pd.Timestamp = OPT_book_df.index[0]
+
+            ###### START Add Features ######
+
+            ## OPT_vol_60s - OPT Volume last min
+            min_ts = max(min_ts, OPT_trades_df.index[0] + pd.Timedelta(seconds=60))
+            OPT_trades_df['OPT_vol_60s'] = OPT_trades_df['size'].rolling('60s').sum()
+            OPT_book_df = pd.merge_asof(left=OPT_book_df, right=OPT_trades_df[['OPT_vol_60s']], left_index=True, right_index=True, direction="backward")
+            OPT_book_df['OPT_vol_60s'] = OPT_book_df['OPT_vol_60s'].fillna(0)
+
+            ## STK_vol_60s - STK Volume last min
+            min_ts = max(min_ts, STK_trades_df.index[0] + pd.Timedelta(seconds=60))
+            STK_trades_df['STK_vol_60s'] = STK_trades_df['size'].rolling('60s').sum()
+            OPT_book_df = pd.merge_asof(left=OPT_book_df, right=STK_trades_df[['STK_vol_60s']], left_index=True, right_index=True, direction="backward")
+            OPT_book_df['STK_vol_60s'] = OPT_book_df['STK_vol_60s'].fillna(0)
+
+            ## STK_mid_price - STK Mid Price
+            STK_book_df['STK_mid_price'] = (STK_book_df['bid_price_0'] + STK_book_df['ask_price_0']) / 2
+            OPT_book_df = pd.merge_asof(left=OPT_book_df, right=STK_book_df[['STK_mid_price']], left_index=True, right_index=True, direction="backward")
+            OPT_book_df['STK_mid_price'] = OPT_book_df['STK_mid_price'].fillna(0)
+            
+            ###### END Add Features ######
+
+            ###### START Target ######
+            
+            # OPT Mid Price
+            OPT_book_df['Target'] = (OPT_book_df['bid_price'] + OPT_book_df['ask_price']) / 2
+
+            ###### END Target ######
+
+            # Filter df
+            OPT_book_df = OPT_book_df[OPT_book_df.index > min_ts]
+
+            dfs.append(OPT_book_df)
+        
+        # Return Logic
+        if (len(dfs) == 0): 
+            
+            return None
+        
+        else: 
+
+            return pd.concat(dfs)
+        
 
 if __name__ == "__main__":
-    
-    # There are 1+ dummy lines
 
-    df = pull_subset_pd()
+    # Create Instance
+    Data_Analysis_Object = Data_Analysis()
 
-    print(df.info())
+    df = Data_Analysis_Object.create_OMM_df(master_df= Data_Analysis_Object.main_df, OPT_sec_list= Data_Analysis_Object.OPT_Security_list, STK_sec= Data_Analysis_Object.STK_Security_list[0])
+
+    df.to_csv("X.csv", index= True)
+    df_analyze = df[["bid_size", "ask_size", "OPT_vol_60s", "STK_vol_60s", "STK_mid_price", "Target"]]
+
+    print(df_analyze.info())
+    print(df_analyze.describe())
+    print(df_analyze.corr())
+
+
+    # df = df_OPT_order_book(df = main_df, ticker = "SPY", exp = "20260324", strike = 653, right = "C")
+    # df.to_csv("OPT_Book.csv", index = True)
+
+    # STK_SPY_book = df_STK_order_book(ticker = "SPY", df = main_df)
+
+    # print(STK_SPY_book.describe())
+    # print(STK_SPY_book.info())
     
-    SPY_OPT_Trades = df_Trades(secType = "OPT", ticker = "SPY", df = df, option_strike = 653.0 , option_exp = "20260324", option_right = "C" )
-    SPY_STK_Trades = df_Trades(secType = "STK", ticker = "SPY", df = df)
+    # STK_SPY_book.iloc[:, 4:].corr().to_csv("STK_SPY_book_corr.csv")
+
     
-    print(SPY_STK_Trades.describe())
+    # SPY_OPT_Trades = df_Trades(secType = "OPT", ticker = "SPY", df = df, option_strike = 653.0 , option_exp = "20260324", option_right = "C" )
+    # SPY_STK_Trades = df_Trades(secType = "STK", ticker = "SPY", df = df)
+    
+    # print(SPY_STK_Trades.describe())
 
     # Graphing
-    # plt.figure(figsize=(16,5))
-    plt.plot(SPY_STK_Trades['price'])
+    # plt.figure(figsize=(16,6))
+    # plt.plot(STK_SPY_book['bid_price_0'], c = 'r')
+    # plt.plot(STK_SPY_book['ask_price_0'], c = 'b')
     # plt.show()
-    
-    
-    # SPY_OPT_Trade_Prices, SPY_OPT_Trade_Sizes = Trades("OPT", "SPY", df)
-
-    # print(SPY_STK_Trade_Prices.describe())
-
-    # print("\n--------------------------------\n")
-
-    # print(SPY_STK_Trade_Sizes.describe())
-    # X, y = create_OMM_pd(df)
-
-    # unix = time.time()
-    # nano_unix = time.time_ns()
-
-    # print(f"UNIX: {unix}")
-    # print(f"NANO UNIX: {nano_unix}")
-
-    # print(f"difference: {nano_unix - unix * 1_000_000_000}")
-
-    """"
-    IDEAS 
-    
-    1. Possibly track the same strike the whole day
-    2. Find a function to get Top of Book MKT data for options too
-
-    """
