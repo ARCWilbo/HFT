@@ -479,7 +479,7 @@ class Data_Analysis:
             ###### START Target ######
             
             # OPT Mid Price
-            OPT_book_df['Target'] = (OPT_book_df['bid_price'] + OPT_book_df['ask_price']) / 2
+            OPT_book_df['Target'] = round((OPT_book_df['bid_price'] + OPT_book_df['ask_price']) / 2,2)
 
             ###### END Target ######
 
@@ -487,21 +487,21 @@ class Data_Analysis:
 
             ## min_to_exp - minutes till expiry 
             exp_dt = pd.to_datetime(OPT_book_df['option_exp'], format="%Y%m%d") + pd.Timedelta(hours=16, minutes=15)
-            OPT_book_df['min_to_exp'] = (exp_dt - OPT_book_df.index).dt.total_seconds() / 60
+            OPT_book_df['min_to_exp'] = round((exp_dt - OPT_book_df.index).dt.total_seconds() / 60)
 
             ## isCall
             OPT_book_df['isCall'] = (OPT_book_df['option_right'] == "C").astype(int)
 
             ## OPT_vol_60s - OPT Volume last min
             min_ts = max(min_ts, OPT_trades_df.index[0] + pd.Timedelta(seconds=60))
-            OPT_trades_df['OPT_vol_60s'] = OPT_trades_df['size'].rolling('60s').sum()
+            OPT_trades_df['OPT_vol_60s'] = round(OPT_trades_df['size'].rolling('60s').sum())
             OPT_book_df = pd.merge_asof(left=OPT_book_df, right=OPT_trades_df[['OPT_vol_60s']], left_index=True, right_index=True, direction="backward")
 
             ## OPT_spread - OPT Spread between bid and ask
-            OPT_book_df['OPT_spread'] = OPT_book_df['ask_price'] - OPT_book_df['bid_price']
+            OPT_book_df['OPT_spread'] = round(OPT_book_df['ask_price'] - OPT_book_df['bid_price'],2)
 
             ## OPT_target_std_60s - std of OPT midprice in the last 60s
-            OPT_book_df['OPT_target_std_60s'] = OPT_book_df['Target'].rolling('60s').std()
+            OPT_book_df['OPT_target_std_60s'] = round(OPT_book_df['Target'].rolling('60s').std(),2)
 
             ###### END OPT Features ######
 
@@ -511,13 +511,13 @@ class Data_Analysis:
             min_ts = max(min_ts, STK_trades_df.index[0] + pd.Timedelta(seconds=60))
             
             ## STK_vol_60s - STK Volume last min
-            STK_trades_df['STK_vol_60s'] = STK_trades_df['size'].rolling('60s').sum()
+            STK_trades_df['STK_vol_60s'] = round(STK_trades_df['size'].rolling('60s').sum())
             
             ## STK_mid_price - STK Mid Price
-            STK_book_df['STK_mid_price'] = (STK_book_df['bid_price_0'] + STK_book_df['ask_price_0']) / 2
+            STK_book_df['STK_mid_price'] = round((STK_book_df['bid_price_0'] + STK_book_df['ask_price_0']) / 2,2)
             
             ## STK_spread
-            STK_book_df['STK_spread'] = STK_book_df['ask_price_0'] - STK_book_df['bid_price_0']
+            STK_book_df['STK_spread'] = round(STK_book_df['ask_price_0'] - STK_book_df['bid_price_0'],2)
             
             # Merge STK_trades_df to OPT_book_df
             OPT_book_df = pd.merge_asof(left=OPT_book_df, right=STK_trades_df[['STK_vol_60s']], left_index=True, right_index=True, direction="backward")
@@ -526,7 +526,7 @@ class Data_Analysis:
             OPT_book_df = pd.merge_asof(left=OPT_book_df, right=STK_book_df[['STK_mid_price', 'STK_spread']], left_index=True, right_index=True, direction="backward")
 
             ## strike_STK_residual
-            OPT_book_df['strike_STK_residual'] = OPT_book_df['strike'] - OPT_book_df['STK_mid_price']
+            OPT_book_df['strike_STK_residual'] = round(OPT_book_df['strike'] - OPT_book_df['STK_mid_price'],2)
 
             ###### END STK Features ######
 
@@ -548,7 +548,10 @@ class Data_Analysis:
         
         else: 
 
-            return pd.concat(dfs)
+            # No index
+            df = pd.concat(dfs).sort_index()
+            df = df.drop_duplicates()
+            return df
         
 
 if __name__ == "__main__":
@@ -560,6 +563,6 @@ if __name__ == "__main__":
 
     df_analyze.to_csv("X.csv", index= True)
     
-    print(df_analyze.info())
-    print(df_analyze.describe())
-    print(df_analyze.corr().to_csv("df_analyze_corr.csv"))
+    # print(df_analyze.info())
+    # print(df_analyze.describe())
+    # print(df_analyze.corr().to_csv("df_analyze_corr.csv"))

@@ -31,8 +31,8 @@ class MLP(nn.Module):
 
         with torch.no_grad():
             # Get last sample
-            X_last = X_test[-1].unsqueeze(0).float().to(device)  # shape (1, d)
-            y_last = y_test[-1].item()
+            X_last = X_test[-1000].unsqueeze(0).float().to(device)  # shape (1, d)
+            y_last = y_test[-1000].item()
 
             pred = self(X_last).item()
 
@@ -142,6 +142,9 @@ if __name__ == '__main__':
     print(device)
     
     df = pd.read_csv("/Users/arcwilbo/Desktop/HFT Research/Will_Branch/X.csv", index_col=0)
+    
+    # Drops 2/3 of Data
+    print(df.shape)
 
     target_col = "Target"
 
