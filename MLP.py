@@ -6,6 +6,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset, DataLoader
 import pandas as pd 
 import numpy as np
+import seaborn as sns
 from Data_Analysis import Data_Analysis, Security
 
 # ----------------------------
@@ -29,19 +30,21 @@ class MLP(nn.Module):
     def print_last_test_prediction(self, X_test, y_test, device):
         self.eval()
 
-        with torch.no_grad():
-            # Get last sample
-            X_last = X_test[-1000].unsqueeze(0).float().to(device)  # shape (1, d)
-            y_last = y_test[-1000].item()
+        for i in range(1, 11):
 
-            pred = self(X_last).item()
+            with torch.no_grad():
+                # Get last sample
+                X_last = X_test[-i].unsqueeze(0).float().to(device)  # shape (1, d)
+                y_last = y_test[-i].item()
 
-            residual = y_last - pred
+                pred = self(X_last).item()
 
-            print("\n--- Last Test Observation ---")
-            print(f"Prediction : {pred:.6f}")
-            print(f"Target     : {y_last:.6f}")
-            print(f"Residual   : {residual:.6f}")
+                residual = y_last - pred
+
+                print("\n--- Last Test Observation ---")
+                print(f"Prediction : {pred:.6f}")
+                print(f"Target     : {y_last:.6f}")
+                print(f"Residual   : {residual:.6f}")
 
 # ----------------------------
 # Training function
@@ -124,9 +127,9 @@ def plot_losses(train_losses, val_losses, test_losses):
 
     plt.figure(figsize=(10,6))
 
-    plt.plot(train_losses, label="Train Loss")
-    plt.plot(val_losses, label="Validation Loss")
-    plt.plot(test_losses, label="Test Loss")
+    plt.plot(train_losses[1:], label="Train Loss")
+    plt.plot(val_losses[1:], label="Validation Loss")
+    plt.plot(test_losses[1:], label="Test Loss")
 
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
@@ -142,8 +145,13 @@ if __name__ == '__main__':
     print(device)
     
     df = pd.read_csv("/Users/arcwilbo/Desktop/HFT Research/Will_Branch/X.csv", index_col=0)
+    # print(df.memory_usage(deep=True).sum())
+
+    plt.figure(figsize=(10,8))
+    sns.heatmap(df.corr(), annot=True, fmt=".2f", cmap='coolwarm')
+    plt.title("Feature Correlation Matrix")
+    plt.show()
     
-    # Drops 2/3 of Data
     print(df.shape)
 
     target_col = "Target"
@@ -190,7 +198,7 @@ if __name__ == '__main__':
         train_loader,
         val_loader,
         test_loader,
-        epochs=30
+        epochs=50
     )
 
 

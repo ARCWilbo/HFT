@@ -465,7 +465,6 @@ class TestApp(EClient, EWrapper):
         self.conId_option_chain[underlyingConId]["exp"].update(expirations)
         self.conId_option_chain[underlyingConId]["strike"].update(strikes)
 
-
     def securityDefinitionOptionParameterEnd(self, reqId: int):
         self.option_chain_event.set()
 
@@ -554,18 +553,32 @@ class TestApp(EClient, EWrapper):
         price = self.conId_to_price[self.ticker_to_conId[ticker]]
 
         ticker_strike = []
-        last = 0
         
+        # Only Strikes with ints and not .5
         ints = [x for x in self.conId_option_chain[self.ticker_to_conId[ticker]]['strike'] if (x%1==0)]
+
+        n: int = len(ints)
+        idx: int = 0
 
         for p in ints:
             
             if (p > price): 
-                ticker_strike.append(last)
-                ticker_strike.append(p)
                 break
 
-            last = p
+            idx+=1
+        
+        # Less than 5 contracts
+        if (n < 5): 
+            ticker_strike += ints
+        elif (idx > 1 and idx + 1 < n): 
+            ticker_strike += ints[idx -2: idx + 2]
+        elif (idx <= 1): 
+            ticker_strike += ints[:4]
+        else: 
+            ticker_strike += ints[-4:]
+
+
+
 
         # today = datetime.today()
 
@@ -590,7 +603,7 @@ class TestApp(EClient, EWrapper):
         #         exp1 = True
         #         option_exps.append(str(exp))
 
-        option_exps = self.conId_option_chain[self.ticker_to_conId[ticker]]['exp'][:2]
+        option_exps = self.conId_option_chain[self.ticker_to_conId[ticker]]['exp'][:3]
         
         self.options_meta_data[ticker] = {"conId": self.ticker_to_conId[ticker], "price": price, "strike": ticker_strike, "exp": option_exps, "date": str(date.today())}
         print(self.options_meta_data[ticker])
@@ -1151,7 +1164,7 @@ if __name__ == "__main__":
     db_worker_thread = threading.Thread(target=db_worker, daemon=True)
     db_worker_thread.start()
 
-    tickers = ["SPY", "QQQ", "IWM"]
+    tickers = ["SPY"]
 
     # SPY QQQ IWM AAPL TSLA AMD, META MSFT
     
@@ -1184,8 +1197,8 @@ if __name__ == "__main__":
         app.req_opt_L2(ticker)
         py_time.sleep(0.1)
         app.req_L1_OPT_Market_Data(ticker, 0, 0, "", secType = "STK")
-        for i in range(2): 
-            for j in range(2): 
+        for i in range(3): 
+            for j in range(4): 
                 for c in ["C", "P"]:
                     app.req_L1_OPT_Market_Data(ticker, i, j, c, secType = "OPT")
                     py_time.sleep(0.1)

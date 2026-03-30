@@ -365,61 +365,6 @@ class Data_Analysis:
             return None
         
         return df['size'].sum()
-
-    def create_OMM_pd(self, ticker: str, df: pd.DataFrame): # -> tuple[pd.DataFrame, pd.DataFrame]
-        """
-        Input: Dirty DF from data accumulation 
-
-        Note: tickSize is called independently and after each tickPrice
-
-        Columns
-            -   id: enumerate index number
-            -   sectype 
-                i) "STK" 
-                ii) "OPT"
-            -   reqid
-            -   ticker
-            -   exchange
-                i)  OPT: "ARCA"
-                ii) STK: "SMART"
-            -   option_exp: Experation Date of Option Contract
-            -   strike
-            -   option_right
-                i)  "C": Call 
-                ii) "P": Put
-            -   position: level on order book 0-9 (where 0 is the best bid/ask level)
-            -   operation
-                i)   0: Intial values
-                ii)  1: Update values
-                iii) 2: Delete values
-            -   side
-                i)   0: Ask 
-                ii)  1: Bid
-                iii) 2: Last
-            -   price
-            -   size
-            -   time: Human Readable time
-            -   event_timestamp: Nanosecond precision of unix for received ts of data
-
-        Output: Clean X, y for ML or DL
-
-        Feautures: 
-            -   STK: Current mid price
-            -   STK: std of price in last min / hr -> proxy of Historical Volatility
-            -   STK: Volume of last minute
-
-            -   OPT: Right (Call / put)
-            -   OPT: std ask price in last min -> Proxy of Implied Volatility
-            -   OPT: Volume of last min
-
-            -   Strike Price
-            -   Time to exp in minutes
-
-        Conceptually: 
-            -   (Target) y: The theo price for the next ts of that OPT secruity — exp, strike, right —
-        """
-
-        return df
     
     def create_OMM_df(self, master_df: pd.DataFrame, OPT_sec_list: List[Security], STK_sec: Security): # -> pd.DataFrame
         """
@@ -429,20 +374,19 @@ class Data_Analysis:
             -   STK_sec: Security, the solo STK sec
         Output: 
             -   X:
-                1) strike
-                2) min_to_exp - time to expiry
-                3) isCall - binary variable (1 = C, 0 = P)
-                4) OPT_vol_60s
-                5) OPT_spread
-                6) OPT_target_std_60s
-                7) STK_vol_60s
-                8) STK_mid_price
-                9) STK_spread
-                10) strike_STK_residual
-                11) Target - Midprice of OPT bid and ask
+                1) min_to_exp - time to expiry
+                2) isCall - binary variable (1 = C, 0 = P)
+                3) OPT_vol_60s
+                4) OPT_spread
+                5) OPT_target_std_60s
+                6) STK_vol_60s
+                7) STK_mid_price
+                8) STK_spread
+                9) strike_STK_residual
+                10) Target - Midprice of OPT bid and ask
         
         Note: 
-            -   Ouput is not sorted
+            -   Time to exp is worng because its in unix ns and nto utc sometimes idk
         """
         
         # Empty sec list
@@ -486,7 +430,7 @@ class Data_Analysis:
             ###### START OPT Features ######
 
             ## min_to_exp - minutes till expiry 
-            exp_dt = pd.to_datetime(OPT_book_df['option_exp'], format="%Y%m%d") + pd.Timedelta(hours=16, minutes=15)
+            exp_dt = pd.to_datetime(OPT_book_df['option_exp'], format="%Y%m%d") + pd.Timedelta(hours=21, minutes=15)
             OPT_book_df['min_to_exp'] = round((exp_dt - OPT_book_df.index).dt.total_seconds() / 60)
 
             ## isCall
@@ -540,6 +484,16 @@ class Data_Analysis:
             OPT_book_df = OPT_book_df.dropna()
 
             dfs.append(OPT_book_df)
+
+            if (not OPT_book_df.empty):
+                n: int = max(OPT_book_df.shape[0],1000)
+
+                plt.figure(figsize=(10,6))
+                plt.scatter(OPT_book_df['strike_STK_residual'].iloc[:n], OPT_book_df['Target'].iloc[:n], alpha=0.3)
+                plt.xlabel('Strike - STK Price')
+                plt.ylabel('Option Mid Price')
+                plt.title(f'{OPT_sec} Option Price vs Moneyness')
+                plt.show()
         
         # Return Logic
         if (len(dfs) == 0): 
@@ -561,7 +515,7 @@ if __name__ == "__main__":
 
     df_analyze = Data_Analysis_Object.create_OMM_df(master_df= Data_Analysis_Object.main_df, OPT_sec_list= Data_Analysis_Object.OPT_Security_list, STK_sec= Data_Analysis_Object.STK_Security_list[0])
 
-    df_analyze.to_csv("X.csv", index= True)
+    # df_analyze.to_csv("X.csv", index= True)
     
     # print(df_analyze.info())
     # print(df_analyze.describe())

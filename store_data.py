@@ -66,7 +66,8 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 QUERY = """
 SELECT *
 FROM option_orders
-ORDER BY event_timestamp ASC;
+ORDER BY event_timestamp ASC
+LIMIT 1000;
 """
 
 TABLE_SHAPE_SQL = """
@@ -141,6 +142,7 @@ def pull():
 
 if __name__ == "__main__":
     add(INITIAL_ROW)
-    pull()
+    df = pull()
+    print(df.info())
 
     # table_stats()
