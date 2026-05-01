@@ -1,0 +1,14 @@
+model:
+  hidden_layers:
+    - [64, 32]
+    - [128, 64]
+    - [256, 128, 64]
+  dropout: [0.0, 0.2]
+
+training:
+  lr: [0.001, 0.0005]
+  batch_size: [128, 256]
+  epochs: 10
+
+data:
+  k_folds: 3

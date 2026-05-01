@@ -1,0 +1,8 @@
+--- Test Metrics (Predicted IV) ---
+metric    value
+   MSE 0.000864
+  RMSE 0.029388
+   MAE 0.019339
+    R² 0.477179
+
+Residual stats (OPT Price - BS(IV)):  mean=0.0041  std=0.0241  min=-0.1186  max=0.3018
