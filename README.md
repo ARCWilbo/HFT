@@ -2,7 +2,8 @@
 
 An end-to-end quantitative research pipeline that streams live tick data from Interactive Brokers, reconstructs limit order books, engineers microstructure features with Black-Scholes Greeks, and trains a multi-layer perceptron to predict implied volatility for same-day-expiry (0DTE) SPY options.
 
-Question: Can order book signals predict IV better than backing it out of Black-Scholes?
+Question: Can we use live order book and trade data, combined with Black-Scholes Greeks, to predict the implied volatility of same-day-expiry SPY options?
+
 ---
 
 ## Table of Contents
