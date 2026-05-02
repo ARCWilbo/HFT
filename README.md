@@ -4,7 +4,7 @@ An end-to-end quantitative research pipeline that streams live tick data from In
 
 Question: Can we use live order book and trade data, combined with Black-Scholes Greeks, to predict the implied volatility of same-day-expiry SPY options?
 
-https://www.youtube.com/watch?v=Tld8Jt8V3I0
+[https://www.youtube.com/watch?v=Tld8Jt8V3I0](https://youtu.be/iuhOACTM94w)
 
 ---
 
