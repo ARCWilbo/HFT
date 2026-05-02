@@ -4,23 +4,90 @@ An end-to-end quantitative research pipeline that streams live tick data from In
 
 Question: Can we use live order book and trade data, combined with Black-Scholes Greeks, to predict the implied volatility of same-day-expiry SPY options?
 
+https://www.youtube.com/watch?v=Tld8Jt8V3I0
+
 ---
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Prerequisites](#prerequisites)
-3. [Project Structure](#project-structure)
-4. [Pipeline](#pipeline)
+1. [Makefile Reference](#makefile-reference)
+2. [Overview](#overview)
+3. [Prerequisites](#prerequisites)
+4. [Project Structure](#project-structure)
+5. [Pipeline](#pipeline)
    - [Stage 1 — Live Data Acquisition](#stage-1--live-data-acquisition)
    - [Stage 2 — PostgreSQL Storage](#stage-2--postgresql-storage)
    - [Stage 3 — Feature Engineering](#stage-3--feature-engineering)
    - [Stage 4 — Exploratory Analysis & Graphs](#stage-4--exploratory-analysis--graphs)
    - [Stage 5 — MLP Training & Evaluation](#stage-5--mlp-training--evaluation)
-5. [Results](#results)
-6. [Graphs & Analysis](#graphs--analysis)
-7. [Makefile Reference](#makefile-reference)
+6. [Results](#results)
+7. [Graphs & Analysis](#graphs--analysis)
 8. [Quickstart](#quickstart)
+
+---
+
+## Makefile Reference
+
+```makefile
+ENV_NAME  = Research
+CONDA     = conda
+RUN       = $(CONDA) run --no-capture-output -n $(ENV_NAME)
+SRC_DIR   = Source
+GRAPH_DIR = Graphs
+```
+
+| Target | Command | Description |
+|--------|---------|-------------|
+| `env` | `make env` | Create conda env `Research` (Python 3.11) and install all dependencies |
+| `install` | `make install` | Re-install dependencies into an existing `Research` env |
+| `pull_data` | `make pull_data` | Connect to TWS and stream live tick data into PostgreSQL |
+| `feature_engineer` | `make feature_engineer` | Read PostgreSQL, reconstruct order books, compute Greeks, write `0dteX.csv` |
+| `graphs` | `make graphs` | Generate all EDA plots from `0dteX.csv` into `Graphs/` |
+| `run_model` | `make run_model` | Run hyperparameter grid search, cross-validation, and final MLP evaluation |
+| `clean` | `make clean` | Delete `__pycache__/` directories and `.pyc` files |
+| `remove` | `make remove` | Permanently delete the `Research` conda environment |
+
+
+```makefile
+ENV_NAME  = Research
+CONDA     = conda
+RUN       = $(CONDA) run --no-capture-output -n $(ENV_NAME)
+SRC_DIR   = Source
+GRAPH_DIR = Graphs
+
+.PHONY: env install pull_data feature_engineer graphs run_model clean remove
+
+env:
+	$(CONDA) create -n $(ENV_NAME) python=3.11 -y
+	$(MAKE) install
+
+install:
+	sed 's| @ file://[^ ]*||g' txt/requirements.txt \
+	    | grep -v '^#' | grep -v '^$$' > /tmp/hft_reqs.txt
+	$(RUN) pip install -r /tmp/hft_reqs.txt
+	@echo "\nDone — '$(ENV_NAME)' is ready."
+
+pull_data:
+	cd "$(SRC_DIR)" && $(RUN) python -u IBKR_Pulling_Data.py
+
+feature_engineer:
+	cd "$(SRC_DIR)" && $(RUN) python -u Cleaning_and_Feature_Engineering.py
+
+graphs:
+	cd "$(GRAPH_DIR)" && $(RUN) python -u Graph_visualizations.py
+
+run_model:
+	cd "$(SRC_DIR)" && $(RUN) python -u MLP.py
+
+clean:
+	find . -type d -name __pycache__ -exec rm -rf {} +
+	find . -name "*.pyc" -delete
+	@echo "Cleaned."
+
+remove:
+	$(CONDA) env remove -n $(ENV_NAME) -y
+	@echo "Environment '$(ENV_NAME)' removed."
+```
 
 ---
 
@@ -409,72 +476,6 @@ An R² of ~0.48 indicates that the 17 microstructure and Greek features explain 
 - The microstructure features (`OPT_ob_imbalance`, `STK_ob_imbalance`, `OPT_spread`, `STK_spread`) have weak pairwise correlations with each other and with the Greeks, confirming they carry independent information beyond what the option math alone captures.
 - `strike_STK_residual` (moneyness) is strongly correlated with `delta` — as expected since delta is a function of moneyness — and negatively correlated with `iv`, again encoding the smile.
 - The VWAP residual features (`OPT_vwap_residual`, `STK_vwap_residual`) have near-zero correlation with the Greeks, confirming they capture intraday momentum signals that are orthogonal to the static option structure.
-
----
-
-## Makefile Reference
-
-```makefile
-ENV_NAME  = Research
-CONDA     = conda
-RUN       = $(CONDA) run --no-capture-output -n $(ENV_NAME)
-SRC_DIR   = Source
-GRAPH_DIR = Graphs
-```
-
-| Target | Command | Description |
-|--------|---------|-------------|
-| `env` | `make env` | Create conda env `Research` (Python 3.11) and install all dependencies |
-| `install` | `make install` | Re-install dependencies into an existing `Research` env |
-| `pull_data` | `make pull_data` | Connect to TWS and stream live tick data into PostgreSQL |
-| `feature_engineer` | `make feature_engineer` | Read PostgreSQL, reconstruct order books, compute Greeks, write `0dteX.csv` |
-| `graphs` | `make graphs` | Generate all EDA plots from `0dteX.csv` into `Graphs/` |
-| `run_model` | `make run_model` | Run hyperparameter grid search, cross-validation, and final MLP evaluation |
-| `clean` | `make clean` | Delete `__pycache__/` directories and `.pyc` files |
-| `remove` | `make remove` | Permanently delete the `Research` conda environment |
-
-The full `Makefile`:
-
-```makefile
-ENV_NAME  = Research
-CONDA     = conda
-RUN       = $(CONDA) run --no-capture-output -n $(ENV_NAME)
-SRC_DIR   = Source
-GRAPH_DIR = Graphs
-
-.PHONY: env install pull_data feature_engineer graphs run_model clean remove
-
-env:
-	$(CONDA) create -n $(ENV_NAME) python=3.11 -y
-	$(MAKE) install
-
-install:
-	sed 's| @ file://[^ ]*||g' txt/requirements.txt \
-	    | grep -v '^#' | grep -v '^$$' > /tmp/hft_reqs.txt
-	$(RUN) pip install -r /tmp/hft_reqs.txt
-	@echo "\nDone — '$(ENV_NAME)' is ready."
-
-pull_data:
-	cd "$(SRC_DIR)" && $(RUN) python -u IBKR_Pulling_Data.py
-
-feature_engineer:
-	cd "$(SRC_DIR)" && $(RUN) python -u Cleaning_and_Feature_Engineering.py
-
-graphs:
-	cd "$(GRAPH_DIR)" && $(RUN) python -u Graph_visualizations.py
-
-run_model:
-	cd "$(SRC_DIR)" && $(RUN) python -u MLP.py
-
-clean:
-	find . -type d -name __pycache__ -exec rm -rf {} +
-	find . -name "*.pyc" -delete
-	@echo "Cleaned."
-
-remove:
-	$(CONDA) env remove -n $(ENV_NAME) -y
-	@echo "Environment '$(ENV_NAME)' removed."
-```
 
 ---
 
