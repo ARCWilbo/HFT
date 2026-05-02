@@ -136,7 +136,7 @@ conn = psycopg.connect(
 ## Project Structure
 
 ```
-Will_Branch/
+Main/
 ├── Source/
 │   ├── IBKR_Pulling_Data.py              # Stage 1: Live TWS API data collection
 │   ├── IBKR_Storing_Data.py              # Stage 2: PostgreSQL schema + insert/query
