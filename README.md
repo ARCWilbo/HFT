@@ -28,66 +28,39 @@ https://www.youtube.com/watch?v=Tld8Jt8V3I0
 
 ## Makefile Reference
 
-```makefile
-ENV_NAME  = Research
-CONDA     = conda
-RUN       = $(CONDA) run --no-capture-output -n $(ENV_NAME)
-SRC_DIR   = Source
-GRAPH_DIR = Graphs
-```
+Quickstart
+Before running any of the following commands, ensure TWS/IB Gateway is open and running, and your PostgreSQL database is up with credentials configured in Source/IBKR_Storing_Data.py.
 
-| Target | Command | Description |
-|--------|---------|-------------|
-| `env` | `make env` | Create conda env `Research` (Python 3.11) and install all dependencies |
-| `install` | `make install` | Re-install dependencies into an existing `Research` env |
-| `pull_data` | `make pull_data` | Connect to TWS and stream live tick data into PostgreSQL |
-| `feature_engineer` | `make feature_engineer` | Read PostgreSQL, reconstruct order books, compute Greeks, write `0dteX.csv` |
-| `graphs` | `make graphs` | Generate all EDA plots from `0dteX.csv` into `Graphs/` |
-| `run_model` | `make run_model` | Run hyperparameter grid search, cross-validation, and final MLP evaluation |
-| `clean` | `make clean` | Delete `__pycache__/` directories and `.pyc` files |
-| `remove` | `make remove` | Permanently delete the `Research` conda environment |
+Step 1 — Create environment and install dependencies
 
+make env
+This creates a conda environment called Research with Python 3.11, strips conda-specific URL metadata from txt/requirements.txt, and installs all pinned packages via pip.
 
-```makefile
-ENV_NAME  = Research
-CONDA     = conda
-RUN       = $(CONDA) run --no-capture-output -n $(ENV_NAME)
-SRC_DIR   = Source
-GRAPH_DIR = Graphs
+Step 2 — Pull live data from IBKR (requires paid IBKR account + running TWS)
 
-.PHONY: env install pull_data feature_engineer graphs run_model clean remove
+make pull_data
+Connects to TWS on the default socket port, requests the SPY option chain, subscribes to L2 stock depth and L1 option quotes, and batches all incoming ticks to PostgreSQL every 30 seconds. Run during market hours. Stop with Ctrl+C when sufficient data has been collected.
 
-env:
-	$(CONDA) create -n $(ENV_NAME) python=3.11 -y
-	$(MAKE) install
+Step 3 — Engineer features (requires data in PostgreSQL)
 
-install:
-	sed 's| @ file://[^ ]*||g' txt/requirements.txt \
-	    | grep -v '^#' | grep -v '^$$' > /tmp/hft_reqs.txt
-	$(RUN) pip install -r /tmp/hft_reqs.txt
-	@echo "\nDone — '$(ENV_NAME)' is ready."
+make feature_engineer
+Streams option_orders from PostgreSQL in 50K-row chunks, reconstructs order books, computes Black-Scholes Greeks and IV for every observation, and writes Data/0dteX.csv.
 
-pull_data:
-	cd "$(SRC_DIR)" && $(RUN) python -u IBKR_Pulling_Data.py
+Step 4 — Generate exploratory graphs (requires 0dteX.csv)
 
-feature_engineer:
-	cd "$(SRC_DIR)" && $(RUN) python -u Cleaning_and_Feature_Engineering.py
+make graphs
+Reads Data/0dteX.csv and writes three EDA plots to Graphs/.
 
-graphs:
-	cd "$(GRAPH_DIR)" && $(RUN) python -u Graph_visualizations.py
+Step 5 — Train and evaluate the MLP (requires 0dteX.csv)
 
-run_model:
-	cd "$(SRC_DIR)" && $(RUN) python -u MLP.py
+make run_model
+Runs the full 24-configuration hyperparameter grid search with 3-fold time-series CV, selects the best model, trains for 25 epochs on the full training split, and evaluates on the held-out test set. Outputs metrics to stdout and writes Graphs/mlp_loss_curve.png and Graphs/residual_histogram.png.
 
-clean:
-	find . -type d -name __pycache__ -exec rm -rf {} +
-	find . -name "*.pyc" -delete
-	@echo "Cleaned."
+Cleanup
 
-remove:
-	$(CONDA) env remove -n $(ENV_NAME) -y
-	@echo "Environment '$(ENV_NAME)' removed."
-```
+make clean     # remove __pycache__ and .pyc files
+make remove    # delete the entire Research conda environment
+
 
 ---
 
@@ -477,55 +450,3 @@ An R² of ~0.48 indicates that the 17 microstructure and Greek features explain 
 - `strike_STK_residual` (moneyness) is strongly correlated with `delta` — as expected since delta is a function of moneyness — and negatively correlated with `iv`, again encoding the smile.
 - The VWAP residual features (`OPT_vwap_residual`, `STK_vwap_residual`) have near-zero correlation with the Greeks, confirming they capture intraday momentum signals that are orthogonal to the static option structure.
 
----
-
-## Quickstart
-
-> Before running any of the following commands, ensure TWS/IB Gateway is open and running, and your PostgreSQL database is up with credentials configured in `Source/IBKR_Storing_Data.py`.
-
-**Step 1 — Create environment and install dependencies**
-
-```bash
-make env
-```
-
-This creates a conda environment called `Research` with Python 3.11, strips conda-specific URL metadata from `txt/requirements.txt`, and installs all pinned packages via pip.
-
-**Step 2 — Pull live data from IBKR** *(requires paid IBKR account + running TWS)*
-
-```bash
-make pull_data
-```
-
-Connects to TWS on the default socket port, requests the SPY option chain, subscribes to L2 stock depth and L1 option quotes, and batches all incoming ticks to PostgreSQL every 30 seconds. Run during market hours. Stop with `Ctrl+C` when sufficient data has been collected.
-
-**Step 3 — Engineer features**  *(requires data in PostgreSQL)*
-
-```bash
-make feature_engineer
-```
-
-Streams `option_orders` from PostgreSQL in 50K-row chunks, reconstructs order books, computes Black-Scholes Greeks and IV for every observation, and writes `Data/0dteX.csv`.
-
-**Step 4 — Generate exploratory graphs** *(requires `0dteX.csv`)*
-
-```bash
-make graphs
-```
-
-Reads `Data/0dteX.csv` and writes three EDA plots to `Graphs/`.
-
-**Step 5 — Train and evaluate the MLP** *(requires `0dteX.csv`)*
-
-```bash
-make run_model
-```
-
-Runs the full 24-configuration hyperparameter grid search with 3-fold time-series CV, selects the best model, trains for 25 epochs on the full training split, and evaluates on the held-out test set. Outputs metrics to stdout and writes `Graphs/mlp_loss_curve.png` and `Graphs/residual_histogram.png`.
-
-**Cleanup**
-
-```bash
-make clean     # remove __pycache__ and .pyc files
-make remove    # delete the entire Research conda environment
-```
