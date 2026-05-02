@@ -34,27 +34,27 @@ Before running any of the following commands, ensure TWS/IB Gateway is open and 
 Step 1 — Create environment and install dependencies
 
 make env
-This creates a conda environment called Research with Python 3.11, strips conda-specific URL metadata from txt/requirements.txt, and installs all pinned packages via pip.
+ ##This creates a conda environment called Research with Python 3.11, strips conda-specific URL metadata from txt/requirements.txt, and installs all pinned packages via pip.
 
 Step 2 — Pull live data from IBKR (requires paid IBKR account + running TWS)
 
 make pull_data
-Connects to TWS on the default socket port, requests the SPY option chain, subscribes to L2 stock depth and L1 option quotes, and batches all incoming ticks to PostgreSQL every 30 seconds. Run during market hours. Stop with Ctrl+C when sufficient data has been collected.
+ ##Connects to TWS on the default socket port, requests the SPY option chain, subscribes to L2 stock depth and L1 option quotes, and batches all incoming ticks to PostgreSQL every 30 seconds. Run during market hours. Stop with Ctrl+C when sufficient data has been collected.
 
 Step 3 — Engineer features (requires data in PostgreSQL)
 
 make feature_engineer
-Streams option_orders from PostgreSQL in 50K-row chunks, reconstructs order books, computes Black-Scholes Greeks and IV for every observation, and writes Data/0dteX.csv.
+ ##Streams option_orders from PostgreSQL in 50K-row chunks, reconstructs order books, computes Black-Scholes Greeks and IV for every observation, and writes Data/0dteX.csv.
 
 Step 4 — Generate exploratory graphs (requires 0dteX.csv)
 
 make graphs
-Reads Data/0dteX.csv and writes three EDA plots to Graphs/.
+ ##Reads Data/0dteX.csv and writes three EDA plots to Graphs/.
 
 Step 5 — Train and evaluate the MLP (requires 0dteX.csv)
 
 make run_model
-Runs the full 24-configuration hyperparameter grid search with 3-fold time-series CV, selects the best model, trains for 25 epochs on the full training split, and evaluates on the held-out test set. Outputs metrics to stdout and writes Graphs/mlp_loss_curve.png and Graphs/residual_histogram.png.
+ ##Runs the full 24-configuration hyperparameter grid search with 3-fold time-series CV, selects the best model, trains for 25 epochs on the full training split, and evaluates on the held-out test set. Outputs metrics to stdout and writes Graphs/mlp_loss_curve.png and Graphs/residual_histogram.png.
 
 Cleanup
 
